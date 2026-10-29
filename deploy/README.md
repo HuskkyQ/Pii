@@ -1,5 +1,35 @@
 # deploy/ —— 线上那台机器的真实配置
 
+## 宿主机上的目录约定
+
+```
+/srv/projects/            ← 「项目根」。agent 的文件世界，一行一个项目
+    my-app/                   agent 在这里干活（git clone 出来的仓库）
+    .pii-backup/              旧的手工备份（已废弃，留着当历史）
+/srv/pii-src/             ← pii 自己的源码（部署副本，只 pull 不手改）
+/opt/pii-test/data/       ← 运行时数据：agent.sqlite（会话/令牌/推送订阅）
+/opt/pii-test/models/     ← models.json + gateway-key（有明文密钥，不进仓库）
+```
+
+容器里的映射：
+
+| 宿主机 | 容器内 | 用途 |
+|---|---|---|
+| `/srv/projects` | `/projects` | `PII_CWD` 默认值 |
+| `/srv/projects` | `/work` | 兼容别名（老会话 cwd 存的是 `/work`） |
+| `/opt/pii-test/data` | `/data` | sqlite |
+| `/opt/pii-test/models/models.json` | `/root/.pi/agent/models.json` | 只读 |
+
+**新建一个项目**（在宿主机上做，因为容器里没有 git）：
+
+```bash
+git clone git@github.com:you/your-repo.git /srv/projects/your-repo
+# 或者在 pii 界面里新建一个空目录，然后在对话里让 agent 干活：
+mkdir -p /srv/projects/scratch
+```
+
+然后在 pii 里把该会话的「工作目录」选成 `/projects/your-repo`。
+
 `docker-compose.yml` + 根目录 `Caddyfile` 是「一台机器全包」的做法（Caddy 跑容器里）。
 但线上这台（阿里云 47.102.100.84）情况不同：
 

@@ -21,6 +21,7 @@ import type { ApprovalBroker } from "./server/approvals.ts";
 import type { PushHub } from "./server/push.ts";
 import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
+import { imageRefExtension } from "./tools/image-ref.ts";
 import { notifyExtension } from "./tools/notify.ts";
 
 export interface AgentOptions {
@@ -85,10 +86,23 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
   }
 
   const archiveDir = options.archiveDir ?? process.env.PII_ARCHIVE_DIR ?? join(resolveDataDir(options.dataDir), "archive");
+  const imageDir = join(resolveDataDir(options.dataDir), "images");
+  const withImageRef = process.env.PII_IMAGE_REF !== "0";
 
   const registry = createRegistry();
   if (withTools) registry.install(CodingTools);
   if (withTools && options.approvals) registry.install(approvalExtension(options.approvals));
+  // 图片外置：base64 不进上下文，只留路径标记；模型需要时用 read 打开
+  if (withImageRef) {
+    registry.install(
+      imageRefExtension({
+        imageDir,
+        onExternalized: ({ files }) => {
+          if (process.env.PII_IMAGE_REF_QUIET !== "1") console.log(`  图片外置  ${files} 张 → ${imageDir}`);
+        },
+      }),
+    );
+  }
   // 归档：上下文被压缩之前，先把被替换的原文落盘（只增不改）
   registry.install(
     archiveExtension({

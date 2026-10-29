@@ -17,7 +17,8 @@ services:
     restart: unless-stopped
     environment:
       PII_AUTH: "1"
-      PII_CWD: /work
+      # 默认工作目录 = 项目根。每个项目是 /projects/<名字> 一个子目录。
+      PII_CWD: /projects
       PII_HOST: 0.0.0.0
       PII_PORT: "8443"
       PII_PROVIDER: magpie
@@ -27,8 +28,11 @@ services:
       NODE_OPTIONS: --max-old-space-size=384
       NODE_ENV: production
     volumes:
-      # agent 的文件世界
-      - /srv/pii-work:/work
+      # agent 的文件世界：宿主机 /srv/projects 就是「项目根」
+      - /srv/projects:/projects
+      # 兼容别名：改动前的老会话 cwd 存的是 /work，指到同一个目录免得它们全失效。
+      # 想彻底干净：在界面上把每个会话的目录改成 /projects，再删掉这一行。
+      - /srv/projects:/work
       # 会话 / 令牌 / 推送订阅（sqlite，绝不能丢）
       - /opt/pii-test/data:/data
       # 模型清单，只读挂载；里面有明文密钥，不进仓库

@@ -180,3 +180,5 @@ connect();
 </body>
 </html>
 `;
+
+// self-update e2e 测试：01:48:48

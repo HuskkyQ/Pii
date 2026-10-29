@@ -73,6 +73,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [cwdOpen, setCwdOpen] = useState(false);
+  /** 刚新建的会话 id：目录选择器要作用于它（而不是还未来得及切过去的 currentId） */
+  const [cwdTarget, setCwdTarget] = useState<number | undefined>(undefined);
   const [permOpen, setPermOpen] = useState(false);
   const [quote, setQuote] = useState<string | null>(null);
 
@@ -127,6 +129,19 @@ export default function App() {
   const createNew = useCallback(async () => {
     const id = await create();
     select(id);
+  }, [create, select]);
+
+  /**
+   * 新建会话 + 立刻选目录。
+   *
+   * 为什么不把「选目录」套在每个新建上：大部分时候你就在同一个项目里连续开几个会话，
+   * 每建一个都要选一次目录很烦。所以「+」沿用当前目录，「📁+」才弹选择器。
+   */
+  const createNewWithCwd = useCallback(async () => {
+    const id = await create();
+    select(id);
+    setCwdTarget(id);
+    setCwdOpen(true);
   }, [create, select]);
 
   /**
@@ -187,6 +202,7 @@ export default function App() {
           activeId={currentId}
           onSelect={select}
           onCreate={() => void createNew()}
+          onCreateWithCwd={() => void createNewWithCwd()}
           creating={creating}
           onDelete={remove}
         />
@@ -231,7 +247,10 @@ export default function App() {
               model={snapshot?.agent?.model}
               cwd={snapshot?.agent?.cwd}
               onOpenModels={() => setModelOpen(true)}
-              onOpenCwd={() => setCwdOpen(true)}
+              onOpenCwd={() => {
+                setCwdTarget(undefined);
+                setCwdOpen(true);
+              }}
               onOpenPermissions={() => setPermOpen(true)}
               permissionPreset={permissionPreset}
               quote={quote}
@@ -255,9 +274,15 @@ export default function App() {
 
         <CwdPicker
           open={cwdOpen}
-          conversationId={currentId}
-          onClose={() => setCwdOpen(false)}
-          onPicked={() => void refresh()}
+          conversationId={cwdTarget ?? currentId}
+          onClose={() => {
+            setCwdOpen(false);
+            setCwdTarget(undefined);
+          }}
+          onPicked={() => {
+            setCwdTarget(undefined);
+            void refresh();
+          }}
         />
 
         <PermissionPicker

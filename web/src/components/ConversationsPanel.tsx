@@ -1,4 +1,4 @@
-import { Loader2, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { FolderPlus, Loader2, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,8 @@ interface ListProps {
   activeId?: number;
   onSelect: (id: number) => void;
   onCreate: () => void;
+  /** 新建会话后立刻弹出目录选择（选在哪个项目里干活） */
+  onCreateWithCwd?: () => void;
   creating: boolean;
   onDelete?: (id: number) => Promise<void>;
 }
@@ -20,7 +22,7 @@ interface PanelProps extends ListProps {
 }
 
 /** 会话列表本体：桌面侧栏和手机抽屉共用同一份。 */
-function ConversationList({ items, activeId, onSelect, onCreate, creating, onDelete }: ListProps) {
+function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd, creating, onDelete }: ListProps) {
   // 两段式确认：第一下只把这一行变成「确认删除？」，第二下才真删。
   // 比 window.confirm 好在：不用弹窗、手指不用来回移动、误触也能退出。
   const [pending, setPending] = useState<number | null>(null);
@@ -35,10 +37,21 @@ function ConversationList({ items, activeId, onSelect, onCreate, creating, onDel
           size="icon"
           variant="ghost"
           className="size-7"
+          onClick={onCreateWithCwd}
+          disabled={creating || !onCreateWithCwd}
+          aria-label="新建会话并选目录"
+          title="新建会话并选项目目录"
+        >
+          <FolderPlus className="size-3.5" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
           onClick={onCreate}
           disabled={creating}
           aria-label="新建会话"
-          title="新建会话"
+          title="新建会话（沿用当前目录）"
         >
           {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-4" />}
         </Button>

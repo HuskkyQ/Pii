@@ -95,12 +95,12 @@ say "  模型：$PROVIDER/$MODEL"
 docker rm -f pii-smoke >/dev/null 2>&1
 docker run -d --name pii-smoke \
   -p "127.0.0.1:${SMOKE_PORT}:8443" \
-  -e PII_AUTH=1 -e PII_CWD=/projects -e PII_HOST=0.0.0.0 -e PII_PORT=8443 \
+  -e PII_AUTH=1 -e PII_CWD=/pii-projects -e PII_HOST=0.0.0.0 -e PII_PORT=8443 \
   -e "PII_PROVIDER=$PROVIDER" -e "PII_MODEL=$MODEL" \
   -e PII_DATA_DIR=/data -e NODE_OPTIONS=--max-old-space-size=384 \
   -e NODE_ENV=production \
   -v /tmp/pii-smoke:/data \
-  -v /srv/projects:/projects \
+  -v /srv/pii-projects:/pii-projects \
   -v /opt/pii-test/models/models.json:/root/.pi/agent/models.json:ro \
   pii:candidate >/dev/null 2>&1 || fail "冒烟容器启动失败"
 

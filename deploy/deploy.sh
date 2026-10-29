@@ -22,7 +22,7 @@ command -v docker >/dev/null || die "没有 docker"
 command -v caddy  >/dev/null || die "没有 caddy 二进制，见 deploy/README.md"
 docker network inspect pii-net >/dev/null 2>&1 || docker network create pii-net
 [ -f /opt/pii-test/models/models.json ] || die "缺少 /opt/pii-test/models/models.json（里面有模型密钥）"
-mkdir -p /opt/pii-test/data /srv/projects
+mkdir -p /opt/pii-test/data /srv/pii-projects
 
 # ---------------------------------------------------------------- 1. 拉代码
 say "1/6 拉取代码"

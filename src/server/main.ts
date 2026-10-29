@@ -1017,7 +1017,7 @@ app.get("/api/stream", async (c) => {
      * 生成过程中 progress commit 很密（每个新字都可能提交一次），
      * 于是 2MB 的快照一秒能推好几次，手机上就是一直转圈。
      *
-     * 做法：最多每 250ms 推一帧，中间的合并成最后一帧（trailing edge）。
+     * 做法：最多每 100ms 推一帧，中间的合并成最后一帧（trailing edge）。
      * 丢中间的帧不会丢信息 —— 因为下一帧是完整快照，不是增量。
      */
     let pending: Snapshot | null = null;
@@ -1035,7 +1035,7 @@ app.get("/api/stream", async (c) => {
       const waiting = timer !== undefined;
       pending = snapshot;
       if (waiting) return; // 已经在队列里了，等它到点一起发
-      timer = setTimeout(flush, 250);
+      timer = setTimeout(flush, 100);
       timer.unref?.();
     };
 

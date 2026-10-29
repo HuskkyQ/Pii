@@ -115,3 +115,38 @@ bind: address already in use    ← 80 被 teslamate-grafana 占着
 
 → Caddyfile 里 `auto_https disable_redirects` + `tls { issuer acme { disable_http_challenge } }`
 两条一起用，才能只靠 443 签发证书。
+
+## 自我更新（手机上让 pii 改自己）
+
+**设计原则：pii 不能自己执行 docker / 不能自己重启自己** —— 否则它写错一行代码就把自己搞死，而那时已经没人能修了。执行权留在宿主机。
+
+```
+手机 → pii(容器) 改 /pii-src 里的源码
+     → 写 /pii-deploy/request
+     → systemd pii-deploy.path 触发
+     → 宿主机 /usr/local/bin/pii-deploy：
+          自动 git commit → 构建 pii:candidate → 冒烟测试(18443 + 数据库副本)
+          → 备份生产库 → 打 tag pii:prev → 切换 → 健康检查
+          → 失败就 tag 回 pii:prev 并重建（自动回滚）
+          → 成功则 git push，并把结果写进 /pii-deploy/status.json
+```
+
+| 文件 | 在哪 | 作用 |
+|---|---|---|
+| `/usr/local/bin/pii-deploy` | 宿主机 | 部署器（**不属于仓库**，agent 改不到） |
+| `/etc/systemd/system/pii-deploy.{path,service}` | 宿主机 | 监听 `request` 文件并触发 |
+| `/srv/pii-deploy/HOWTO.md` | 宿主机 ⇄ 容器 `/pii-deploy` | 给 pii 自己看的操作手册 |
+| `/srv/pii-src` | 宿主机 ⇄ 容器 `/pii-src` | 源码工作区 |
+
+四条安全线：**冒烟测试（用数据库副本另起一份）→ 生产库备份 → 健康检查 → 自动回滚**。
+任何一步失败，生产环境都不受影响或自动回到上一版。
+
+首次安装（宿主机上）：
+
+```bash
+install -m 0755 pii-deploy.sh    /usr/local/bin/pii-deploy
+install -m 0644 pii-deploy.path  /etc/systemd/system/
+install -m 0644 pii-deploy.service /etc/systemd/system/
+mkdir -p /srv/pii-deploy
+systemctl daemon-reload && systemctl enable --now pii-deploy.path
+```

@@ -37,6 +37,10 @@ services:
       - /opt/pii-test/data:/data
       # 模型清单，只读挂载；里面有明文密钥，不进仓库
       - /opt/pii-test/models/models.json:/root/.pi/agent/models.json:ro
+      # 自我更新：pii 在这里改自己的源码（改的是 git 工作区，不影响运行中的镜像）
+      - /srv/pii-src:/pii-src
+      # 自我更新的控制面板：写 request 触发宿主机部署，读 status.json 看结果
+      - /srv/pii-deploy:/pii-deploy
     ports:
       # 只绑回环 —— 外部唯一入口是 Caddy 的 443。
       # 想临时绕过 Caddy 调试，把下面改成 "8443:8443"。

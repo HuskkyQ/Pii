@@ -34,6 +34,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { openAgent, resolveCwd, resolveDataDir } from "../agent.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
+import { archiveEntries, listArchives, readArchive } from "./archive.ts";
 import { createAuth } from "./auth.ts";
 import { keepAwake } from "./awake.ts";
 import { createConversation, listConversations, openConversation, parseConversationId, titleOf } from "./conversations.ts";
@@ -415,6 +416,86 @@ app.get("/api/fs", (c) => {
  *   拆出来之后：快照里只有一个 URL，图片本身由浏览器缓存
  *   （entry 不可变 → immutable，一年不再请求）。
  */
+/** 归档目录：默认 <数据目录>/archive，可用 PII_ARCHIVE_DIR 指到项目里。 */
+const archiveDir = process.env.PII_ARCHIVE_DIR ?? join(dataDir, "archive");
+
+/** 某个会话的归档文件列表（新的在前）。 */
+/**
+ * 手动压缩上下文（把较早的部分换成摘要）。
+ *
+ * 平时是自动的：上下文到「模型窗口 - reserveTokens」时 pi-durable 自己压。
+ * 这个端点用于主动腾地方（比如换到小窗口模型之前）。
+ * 压缩前会把被替换的原文归档（见 tools/archive-hook.ts）。
+ */
+app.post("/api/compact", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { instructions?: string };
+  const conversation = await resolveConversation(parseConversationId(c.req.query("c")));
+  if (!conversation) return c.json({ error: "会话不存在" }, 404);
+
+  const taskId = await conversation.compact(body.instructions, BACKGROUND_CONTEXT);
+  return c.json({ ok: true, taskId: Number(taskId) });
+});
+
+app.get("/api/archive", (c) => {
+  const conversationId = parseConversationId(c.req.query("c"));
+  if (conversationId === undefined) return c.json({ error: "需要 ?c=<会话id>" }, 400);
+  return c.json({
+    dir: join(archiveDir, String(conversationId)),
+    files: listArchives(archiveDir, conversationId).map((file) => ({
+      name: file.name,
+      bytes: file.bytes,
+      at: file.at,
+    })),
+  });
+});
+
+/** 读一个归档文件（预览用）。只允许归档目录里的 .md，防路径穿越。 */
+app.get("/api/archive/file", (c) => {
+  const name = c.req.query("name");
+  const conversationId = parseConversationId(c.req.query("c"));
+  if (!name || conversationId === undefined) return c.json({ error: "参数不全" }, 400);
+  if (!/^[\w.-]+\.md$/.test(name)) return c.json({ error: "文件名不合法" }, 400);
+  try {
+    return c.text(readArchive(join(archiveDir, String(conversationId), name)));
+  } catch {
+    return c.json({ error: "文件不存在" }, 404);
+  }
+});
+
+/**
+ * 手动归档：把当前会话的全部条目导出成一份 markdown。
+ * 自动归档只在「压缩发生时」触发；这个端点用来随时留一份原文快照。
+ */
+app.post("/api/archive", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { conversationId?: number };
+  const conversation = await resolveConversation(
+    body.conversationId ?? parseConversationId(c.req.query("c")),
+  );
+  if (!conversation) return c.json({ error: "会话不存在" }, 404);
+
+  const state = await conversation.viewState(BACKGROUND_CONTEXT);
+  const value = state.value;
+  state.dispose();
+  if (!value) return c.json({ error: "视图尚未就绪" }, 503);
+
+  const snapshot = projectView(value, { durationOf: taskDuration });
+  const result = archiveEntries({
+    archiveDir,
+    conversationId: Number(conversation.id),
+    entries: snapshot.entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      ...(entry.at === undefined ? {} : { at: entry.at }),
+      blocks: entry.blocks,
+    })),
+    reason: "manual",
+    title: titles.get(Number(conversation.id)),
+  });
+
+  if (!result) return c.json({ error: "没有可归档的内容" }, 400);
+  return c.json({ ok: true, path: result.path, entries: result.entries, bytes: result.bytes });
+});
+
 app.get("/api/image", async (c) => {
   const conversationId = parseConversationId(c.req.query("c"));
   const entryId = Number(c.req.query("e"));
@@ -626,14 +707,17 @@ app.get("/api/build", (c) => {
  * 窗口化后一帧几十 KB；更早的历史用 `?before=<id>` 往前翻。
  * 想一次全要：`?limit=0`。
  */
-const SNAPSHOT_LIMIT = Number(process.env.PII_SNAPSHOT_LIMIT ?? 20);
+/** 一屏大概 5 轮对话（用户消息 + 最终回答 = 2 条 → 10 条）。 */
+const SNAPSHOT_TURNS = Number(process.env.PII_SNAPSHOT_TURNS ?? 5);
 
-function windowOptions(input: { limit?: string; before?: string }) {
-  const limit = input.limit === undefined ? SNAPSHOT_LIMIT : Number(input.limit);
+function windowOptions(input: { turns?: string; limit?: string; before?: string }) {
+  const turns = input.turns === undefined ? SNAPSHOT_TURNS : Number(input.turns);
+  const limit = input.limit === undefined ? undefined : Number(input.limit);
   const before = input.before === undefined ? undefined : Number(input.before);
   return {
     durationOf: taskDuration,
-    ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+    ...(Number.isFinite(turns) && turns > 0 ? { turns } : {}),
+    ...(limit !== undefined && Number.isFinite(limit) && limit > 0 ? { limit } : {}),
     ...(before !== undefined && Number.isFinite(before) ? { before } : {}),
   };
 }
@@ -647,7 +731,14 @@ app.get("/api/state", async (c) => {
   state.dispose();
   if (!value) return c.json({ error: "视图尚未就绪" }, 503);
   return c.json(
-    projectView(value, windowOptions({ limit: c.req.query("limit"), before: c.req.query("before") })),
+    projectView(
+      value,
+      windowOptions({
+        turns: c.req.query("turns"),
+        limit: c.req.query("limit"),
+        before: c.req.query("before"),
+      }),
+    ),
   );
 });
 
@@ -829,8 +920,7 @@ app.get("/api/stream", async (c) => {
 
     const initial = state.value;
     {
-      const limitParam = c.req.query("limit");
-      const options = windowOptions(limitParam === undefined ? {} : { limit: limitParam });
+      const options = windowOptions({ turns: c.req.query("turns") });
       if (initial) pushSnapshot(projectView(initial, options));
     }
 
@@ -838,8 +928,7 @@ app.get("/api/stream", async (c) => {
     // 只补发本会话的 —— 别的会话的审批不该弹在你脸上。
     for (const request of approvals.list(scope)) emit("approval", request);
 
-    const limitParam = c.req.query("limit");
-    const streamOptions = windowOptions(limitParam === undefined ? {} : { limit: limitParam });
+    const streamOptions = windowOptions({ turns: c.req.query("turns") });
     const unsubscribe = state.subscribe((value) => pushSnapshot(projectView(value, streamOptions)));
     const offRequest = approvals.onRequest((request: ApprovalRequest) => {
       if (request.conversationId === scope) emit("approval", request);

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Entry, LiveView, Snapshot } from "@/lib/types";
@@ -6,6 +6,7 @@ import { DIVIDER_GAP, formatDivider } from "@/lib/time";
 
 import { EntryRow } from "./EntryRow";
 import { LiveRow } from "./LiveRow";
+import { LoadingOlder } from "./LoadingOlder";
 import { TranscriptSkeleton } from "./TranscriptSkeleton";
 import { TurnRow, groupTurns } from "./TurnRow";
 
@@ -115,7 +116,12 @@ export function Transcript({
     prevLen.current = ents.length;
   }, [snapshot]);
 
-  const turns = groupTurns(entries);
+  /*
+   * 分组是纯计算，但条目多的时候（几百条）每次快照都重算会掉帧。
+   * 用「条目 id 拼成的 key」做 memo：只有真的新增/替换条目才重算。
+   */
+  const entriesKey = entries.length === 0 ? "0" : `${entries.length}:${entries[0]!.id}:${entries[entries.length - 1]!.id}`;
+  const turns = useMemo(() => groupTurns(entries), [entriesKey]);
 
   return (
     <ScrollArea
@@ -138,10 +144,10 @@ export function Transcript({
       <div ref={container} className="mx-auto w-full max-w-[860px] space-y-4 px-4 py-5">
         {loading && <TranscriptSkeleton />}
 
-        {!loading && (hasMore || loadingOlder) && (
-          <div className="flex justify-center py-1 text-[11.5px] text-muted-foreground/60">
-            {loadingOlder ? "正在加载更早的消息…" : atTop ? "往下滑会继续加载" : ""}
-          </div>
+        {!loading && <LoadingOlder visible={loadingOlder} />}
+
+        {!loading && !loadingOlder && hasMore && atTop && (
+          <div className="flex justify-center py-1 text-[11px] text-muted-foreground/50">继续上滑加载更早</div>
         )}
 
         {!loading && entries.length === 0 && !busy && (

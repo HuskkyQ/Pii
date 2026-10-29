@@ -19,6 +19,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { loadModels } from "./provider.ts";
 import type { ApprovalBroker } from "./server/approvals.ts";
 import type { PushHub } from "./server/push.ts";
+import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
 import { notifyExtension } from "./tools/notify.ts";
 
@@ -37,6 +38,8 @@ export interface AgentOptions {
   push?: PushHub;
   /** 会话标题查询（推送通知的标题用） */
   titleOf?: (conversationId: number) => string | undefined;
+  /** 归档目录（压缩前把被替换的原文写进去）；默认 `<数据目录>/archive` */
+  archiveDir?: string;
   /** 思考等级；不传沿用会话里已存的值。 */
   thinkingLevel?: string;
 }
@@ -81,9 +84,18 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
     throw new Error(`找不到模型 ${provider}/${modelId}，检查 ~/.pi/agent/models.json`);
   }
 
+  const archiveDir = options.archiveDir ?? process.env.PII_ARCHIVE_DIR ?? join(resolveDataDir(options.dataDir), "archive");
+
   const registry = createRegistry();
   if (withTools) registry.install(CodingTools);
   if (withTools && options.approvals) registry.install(approvalExtension(options.approvals));
+  // 归档：上下文被压缩之前，先把被替换的原文落盘（只增不改）
+  registry.install(
+    archiveExtension({
+      archiveDir,
+      ...(options.titleOf ? { titleOf: options.titleOf } : {}),
+    }),
+  );
   if (options.push) {
     registry.install(notifyExtension(options.push, { titleOf: options.titleOf ?? (() => undefined) }));
   }
@@ -94,6 +106,19 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
     {
       models,
       registry,
+      /*
+       * 上下文压缩（pi-durable 自带，默认已开启）：
+       *   reserveTokens   给回答留的空间；上下文到「窗口 - 它」就开始压缩
+       *   keepRecentTokens 最近这么多 token 的原文保留不动
+       * 这里允许用环境变量调，方便小窗口模型（128k）和大窗口模型共用一份配置。
+       */
+      settings: {
+        compaction: {
+          ...(process.env.PII_COMPACT_RESERVE ? { reserveTokens: Number(process.env.PII_COMPACT_RESERVE) } : {}),
+          ...(process.env.PII_COMPACT_KEEP ? { keepRecentTokens: Number(process.env.PII_COMPACT_KEEP) } : {}),
+          ...(process.env.PII_COMPACT_OFF === "1" ? { enabled: false } : {}),
+        },
+      },
       ...(withTools
         ? { env: ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? process.cwd() }) }
         : {}),

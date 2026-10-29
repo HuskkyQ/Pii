@@ -85,9 +85,14 @@ export function prompt(
   );
 }
 
-/** 往前翻一页（窗口化的另一半）：取 id < before 的最近 limit 条。 */
-export function fetchOlderEntries(conversationId: number | undefined, before: number, limit = 20) {
-  const params = new URLSearchParams({ limit: String(limit), before: String(before) });
+/**
+ * 往前翻一页：取 id < before 的最近 `turns` 轮对话。
+ *
+ * 按轮而不是按条：一条用户消息后面跟着思考/工具/结果/正文，可能 6~10 条 entry，
+ * 按条切会切在半轮中间，加载出一堆没头没尾的思考。
+ */
+export function fetchOlderEntries(conversationId: number | undefined, before: number, turns = 5) {
+  const params = new URLSearchParams({ turns: String(turns), before: String(before) });
   if (conversationId !== undefined) params.set("c", String(conversationId));
   return getJson<{ entries: unknown[]; hasMore?: boolean; oldestEntryId?: number | null }>(
     `/api/state?${params.toString()}`,

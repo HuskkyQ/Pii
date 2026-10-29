@@ -290,16 +290,44 @@ export interface ProjectOptions {
   limit?: number;
   /** 只取 id < before 的部分（向前翻页） */
   before?: number;
+  /**
+   * 只投影最近 `turns` **轮对话**（一轮 = 一条用户消息 + 它之后的全部条目）。
+   *
+   * 为什么按轮而不按条：一条用户消息后面跟着思考、工具调用、工具结果、最终正文，
+   * 可能是 6~10 条 entry。按条切窗口会出现「切在半轮中间」——
+   * 加载出来一堆没有提问的思考，或者有提问没有回答。按轮切永远完整。
+   */
+  turns?: number;
 }
 
 export function projectView(view: ConversationView, options: ProjectOptions = {}): Snapshot {
-  let entries = projectEntries(view);
+  const all = projectEntries(view);
+  let entries = all;
 
-  const all = entries.length;
-  if (options.before !== undefined) entries = entries.filter((entry) => entry.id < (options.before as number));
-  if (options.limit !== undefined && entries.length > options.limit) {
-    entries = entries.slice(-options.limit);
+  // 往前翻页：先按游标截断
+  if (options.before !== undefined) {
+    const before = options.before;
+    entries = entries.filter((entry) => entry.id < before);
   }
+
+  // 再按「轮」取最后 N 轮
+  let dropped = all.length - entries.length;
+  if (options.turns !== undefined && options.turns > 0) {
+    const starts: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i]!.kind === "pi.user") starts.push(i);
+    }
+    if (starts.length > options.turns) {
+      const start = starts[starts.length - options.turns]!;
+      dropped += start;
+      entries = entries.slice(start);
+    }
+  } else if (options.limit !== undefined && entries.length > options.limit) {
+    const cut = entries.length - options.limit;
+    dropped += cut;
+    entries = entries.slice(cut);
+  }
+
   const oldestEntryId = entries.length > 0 ? entries[0]!.id : null;
   if (options.durationOf) {
     for (const entry of entries) {
@@ -311,8 +339,8 @@ export function projectView(view: ConversationView, options: ProjectOptions = {}
   return {
     conversationId: view.conversation.id as unknown as number,
     entries,
-    /** 还有更早的吗（前端据此决定要不要显示「加载更早」） */
-    hasMore: oldestEntryId !== null && all > 0 && entries.length > 0 && oldestEntryId > (view.entries[0]?.id ?? 0),
+    /** 还有更早的吗（前端据此决定要不要继续加载） */
+    hasMore: dropped > 0,
     oldestEntryId,
     live: projectLive(view.docs["pi.live"]),
     usage: view.docs["pi.usage"] ?? null,

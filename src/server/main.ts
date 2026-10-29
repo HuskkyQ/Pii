@@ -29,7 +29,7 @@ import { Hono } from "hono";
 import { compress } from "hono/compress";
 import { streamSSE } from "hono/streaming";
 
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { openAgent, resolveCwd, resolveDataDir } from "../agent.ts";
@@ -51,16 +51,33 @@ const host = process.env.PII_HOST ?? "127.0.0.1";
 /** web/dist 的位置；相对路径从一个固定基准算，不依赖 cwd。 */
 const WEB_DIST = fileURLToPath(new URL("../../web/dist", import.meta.url));
 
-/** 一个 storage 只能被一个进程持有；用一个 pid 锁文件兜住。 */
+/**
+ * 一个 storage 只能被一个进程持有；用一个锁文件兜住。
+ *
+ * 锁文件里存 `主机名:pid`，不只是一个 pid。为什么：
+ *   容器被 `docker rm -f` 杀掉时不会走优雅退出，锁文件留在数据目录里。
+ *   下次启动如果只看 pid，就可能撞上「新容器里恰好也有个同号进程」，
+ *   于是永远启动不了（crash loop）。加上主机名之后：
+ *     - 主机名不同 → 上一代容器的残留，直接覆盖
+ *     - 主机名相同且进程还在 → 真的重复启动，拒绝
+ */
 function acquireLock(dir: string): () => void {
   mkdirSync(dir, { recursive: true });
   const lockPath = join(dir, "server.lock");
+  const identity = `${hostname()}:${process.pid}`;
+
   try {
-    const existing = Number(readFileSync(lockPath, "utf8").trim());
-    if (existing && existing !== process.pid) {
+    const raw = readFileSync(lockPath, "utf8").trim();
+    // 兼容老格式（纯 pid）
+    const [maybeHost, maybePid] = raw.includes(":") ? raw.split(":") : [undefined, raw];
+    const existingHost = maybeHost;
+    const existingPid = Number(maybePid);
+
+    const sameHost = existingHost === undefined ? true : existingHost === hostname();
+    if (sameHost && existingPid && existingPid !== process.pid) {
       try {
-        process.kill(existing, 0);
-        throw new Error(`已经有 pii 在跑（pid ${existing}），数据目录 ${dir}`);
+        process.kill(existingPid, 0);
+        throw new Error(`已经有 pii 在跑（pid ${existingPid}），数据目录 ${dir}`);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }
@@ -68,7 +85,8 @@ function acquireLock(dir: string): () => void {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  writeFileSync(lockPath, String(process.pid));
+
+  writeFileSync(lockPath, identity);
   return () => rmSync(lockPath, { force: true });
 }
 
@@ -200,6 +218,54 @@ function taskDuration(taskId: number): number | undefined {
   }
   durationCache.set(taskId, value);
   return value;
+}
+
+
+/**
+ * 最近一次失败的运行。
+ *
+ * 为什么需要：模型不可达（隧道断了、API key 失效、被限流）时，pi-durable 只把任务标成
+ * `failed`，**不会往对话里写任何东西** —— 用户看到的就是「消息发出去，永远没有回复」。
+ * 实测过：隧道断了之后界面完全没提示，只能靠猜。
+ *
+ * 这里从 tasks 表里捞最近一条失败记录，随快照一起发出去，前端画一条红色提示。
+ */
+interface RunFailure {
+  taskId: number;
+  message: string;
+  reason?: string;
+  at?: number;
+}
+
+function latestFailure(conversationId: number): RunFailure | null {
+  try {
+    if (!durationDb) {
+      durationDb = new DatabaseSync(agent.dbPath, { readOnly: true });
+      durationDb.exec("PRAGMA busy_timeout = 1000");
+    }
+    const row = durationDb
+      .prepare(
+        "SELECT id, record FROM tasks WHERE conversation_id = ? AND status = 'terminal' ORDER BY id DESC LIMIT 1",
+      )
+      .get(conversationId) as { id?: number; record?: string } | undefined;
+    if (!row?.record) return null;
+
+    const record = JSON.parse(row.record) as {
+      endedAt?: unknown;
+      state?: { outcome?: { status?: string; error?: { message?: string; detail?: { reason?: string } } } };
+    };
+    const outcome = record.state?.outcome;
+    if (outcome?.status !== "failed") return null;
+
+    return {
+      taskId: Number(row.id),
+      message: outcome.error?.message ?? "运行失败",
+      ...(outcome.error?.detail?.reason ? { reason: outcome.error.detail.reason } : {}),
+      ...(typeof record.endedAt === "number" ? { at: record.endedAt } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 const app = new Hono();
@@ -416,6 +482,56 @@ app.get("/api/fs", (c) => {
  *   拆出来之后：快照里只有一个 URL，图片本身由浏览器缓存
  *   （entry 不可变 → immutable，一年不再请求）。
  */
+/**
+ * 导入一段外部对话（只做展示，不进入模型上下文）。
+ *
+ * 用途：把别的工具里的对话（Claude Code、ChatGPT、导出的 markdown）搬进来，
+ * 在手机上翻着看。技术上用的是 pi-durable 的 `type: "write"` 被动写入 ——
+ * 没有 `model` 字段的 entry 不会被算进上下文，所以**不会消耗 token、不会影响对话**。
+ *
+ * 前端不用改：投影时把 `pii.import.user/assistant` 映射回 `pi.user/pi.assistant`，
+ * 分轮、气泡、折叠全都复用现成的。
+ */
+app.post("/api/import", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    title?: string;
+    items?: { role?: string; text?: string; at?: number }[];
+  };
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (items.length === 0) return c.json({ error: "items 不能为空" }, 400);
+
+  const conversation = await createConversation(agent);
+  let written = 0;
+
+  for (const item of items) {
+    const text = typeof item.text === "string" ? item.text.trim() : "";
+    if (!text) continue;
+    const role = item.role === "assistant" ? "assistant" : "user";
+
+    await conversation.submit(
+      {
+        type: "write",
+        entry: {
+          kind: `pii.import.${role}`,
+          data: {
+            blocks: [{ type: "text", text }],
+            ...(typeof item.at === "number" ? { at: item.at } : {}),
+          },
+        } as never,
+      },
+      BACKGROUND_CONTEXT,
+    );
+    written += 1;
+  }
+
+  const id = Number(conversation.id);
+  if (typeof body.title === "string" && body.title.trim()) {
+    customTitles.set(id, body.title.trim().slice(0, TITLE_MAX));
+  }
+
+  return c.json({ ok: true, conversationId: id, written, title: body.title ?? null });
+});
+
 /** 归档目录：默认 <数据目录>/archive，可用 PII_ARCHIVE_DIR 指到项目里。 */
 const archiveDir = process.env.PII_ARCHIVE_DIR ?? join(dataDir, "archive");
 
@@ -730,16 +846,21 @@ app.get("/api/state", async (c) => {
   const value = state.value;
   state.dispose();
   if (!value) return c.json({ error: "视图尚未就绪" }, 503);
-  return c.json(
-    projectView(
-      value,
-      windowOptions({
-        turns: c.req.query("turns"),
-        limit: c.req.query("limit"),
-        before: c.req.query("before"),
-      }),
-    ),
+  const snapshot = projectView(
+    value,
+    windowOptions({
+      turns: c.req.query("turns"),
+      limit: c.req.query("limit"),
+      before: c.req.query("before"),
+    }),
   );
+  // 只有在「没在跑」的时候才报失败，否则生成中也会看到上一条旧错误
+  const live = (snapshot.live as { phase?: string } | null) ?? null;
+  if (!live?.phase) {
+    const failure = latestFailure(snapshot.conversationId);
+    if (failure) snapshot.runError = failure;
+  }
+  return c.json(snapshot);
 });
 
 /** 会话列表：最新在前，标题优先用自定义，否则来自第一条用户消息。 */

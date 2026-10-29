@@ -69,6 +69,11 @@ export interface Snapshot {
   hasMore?: boolean;
   /** 窗口里最老的那条 id（往前翻页的游标） */
   oldestEntryId?: number | null;
+  /**
+   * 最近一次失败的运行（模型不可达、key 失效、被限流…）。
+   * 失败时对话里不会写入任何东西，所以必须单独带出来，否则用户只看到「没回复」。
+   */
+  runError?: { taskId: number; message: string; reason?: string; at?: number } | null;
   /** pi.live 的结构化投影：正在跑的生成（含流式半截）和工具调用 */
   live: LiveView | null;
   /** pi.usage：token / 花费累计 */
@@ -155,17 +160,42 @@ export function projectEntries(view: ConversationView): Entry[] {
       blocks.push(...asBlocks(message, conversationId, entryId));
     }
 
+    /*
+     * 导入的会话（`pii.import.*`）：这类 entry 没有 model，只有 data.blocks，
+     * 是「纯展示」的 —— 它们不参与模型上下文，只用来把一段外部对话读进来看。
+     *
+     * 投影时把 kind 映射回 pi.user / pi.assistant，前端的分轮、气泡、折叠就全都能复用，
+     * 一行 UI 代码都不用改。
+     */
+    if (blocks.length === 0 && entry.kind.startsWith("pii.import.")) {
+      const data = entry.data as { blocks?: unknown } | undefined;
+      const raw = Array.isArray(data?.blocks) ? data.blocks : [];
+      for (const item of raw) {
+        const block = item as { type?: string; text?: unknown };
+        if (typeof block?.text !== "string") continue;
+        if (block.type === "thinking") blocks.push({ type: "thinking", text: block.text });
+        else blocks.push({ type: "text", text: block.text });
+      }
+    }
+
     // 工具结果 entry 没有 text block 也要保留（前端要显示「跑完了」）
     if (blocks.length === 0) continue;
 
     const messages = (entry.model ?? []) as unknown as RawMessage[];
     const at = messages.find((message) => typeof message.timestamp === "number")?.timestamp;
 
+    const imported = entry.kind.startsWith("pii.import.");
+    const importedAt = imported
+      ? (entry.data as { at?: unknown } | undefined)?.at
+      : undefined;
+
     entries.push({
       id: entry.id as unknown as number,
-      kind: entry.kind,
+      kind: imported ? entry.kind.replace("pii.import.", "pi.") : entry.kind,
       blocks,
-      ...(at === undefined ? {} : { at }),
+      ...(at === undefined && typeof importedAt !== "number"
+        ? {}
+        : { at: typeof importedAt === "number" ? importedAt : at }),
       ...(entry.byTaskId === undefined ? {} : { byTaskId: entry.byTaskId as unknown as number }),
     });
   }

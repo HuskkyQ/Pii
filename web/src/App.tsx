@@ -12,7 +12,7 @@ import { Composer } from "@/components/chat/Composer";
 import { Transcript } from "@/components/chat/Transcript";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { deleteConversation, getLastConversation, renameConversation, setLastConversation } from "@/lib/api";
+import { deleteConversation, getLastConversation, prompt, renameConversation, setLastConversation } from "@/lib/api";
 import { useConversations } from "@/hooks/useConversations";
 import { usePii } from "@/hooks/usePii";
 import { usePolicy } from "@/hooks/usePolicy";
@@ -213,6 +213,12 @@ export default function App() {
               loadingOlder={loadingOlder}
               onLoadOlder={() => void loadOlder()}
               onQuote={(text) => setQuote(text)}
+              runError={snapshot?.runError ?? null}
+              onRetry={() => {
+                const last = [...(snapshot?.entries ?? [])].reverse().find((entry) => entry.kind === "pi.user");
+                const text = last?.blocks.map((block) => (block.type === "text" ? block.text : "")).join("").trim();
+                if (text) void prompt(text, currentId);
+              }}
             />
           </main>
           <div className="relative">

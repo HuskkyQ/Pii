@@ -150,14 +150,9 @@ export function TurnRow({
 
           <CollapsibleContent className="mt-1 space-y-2 border-l border-border/60 pl-3">
             {turn.process
-              // 展开后只留「思考 / 工具」：过程里夹着的中间正文（“我先看一下…”）
-              // 对回看没有价值，翻起来还吵，直接剔掉。
-              // thinking 必须留 —— 它就是“展开能看到的思考”。
-              .map((entry) => {
-                const blocks = entry.blocks.filter((block) => block.type !== "text");
-                return blocks.length > 0 ? { ...entry, blocks } : null;
-              })
-              .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+              // 展开后按原始顺序展示每一步（思考 / 工具 / 中间正文都保留），
+              // 这样「过程性正文」能在它准确的位置看到；折叠时则整块收起。
+              .filter((entry) => entry.blocks.length > 0)
               .map((entry) => (
                 <EntryRow key={entry.id} entry={entry} onQuote={onQuote} />
               ))}

@@ -1,4 +1,6 @@
-import { Quote } from "lucide-react";
+import { Check, Copy, Quote } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { Markdown } from "./Markdown";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -6,7 +8,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { ToolResultBlock } from "./ToolResultBlock";
 import type { Entry } from "@/lib/types";
 import { blocksToQuote, formatDuration, formatStamp } from "@/lib/time";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 interface EntryRowProps {
   entry: Entry;
@@ -18,8 +20,17 @@ interface EntryRowProps {
   thinkingDurationMs?: number;
 }
 
+/** 整条 entry 的纯文本（用于「复制」，不截断）。 */
+function blocksToText(blocks: Entry["blocks"]): string {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === "text" && block.text) parts.push(block.text);
+  }
+  return parts.join("\n").trim();
+}
+
 /**
- * 「引用」按钮。
+ * 「引用」按钮：把消息文字带回输入框。
  * 手机上不能靠 hover，所以做成「平时很淡、点一下就引用」——不抢视线但总在手边。
  */
 function QuoteButton({ entry, onQuote }: { entry: Entry; onQuote?: (text: string) => void }) {
@@ -31,15 +42,78 @@ function QuoteButton({ entry, onQuote }: { entry: Entry; onQuote?: (text: string
       type="button"
       onClick={() => onQuote(text)}
       aria-label="引用这条"
-      title="引用这条"
+      title="引用"
       className={cn(
-        "shrink-0 self-start rounded-md p-1 text-muted-foreground/40 transition-colors",
+        "shrink-0 rounded-md p-1 text-muted-foreground/40 transition-colors",
         "hover:bg-accent hover:text-accent-foreground active:bg-accent",
-        "sm:opacity-0 sm:group-hover:opacity-100",
       )}
     >
       <Quote className="size-3.5" />
     </button>
+  );
+}
+
+/** 「复制」按钮：复制整条消息的文字，成功后短暂显示对勾。 */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+
+  async function copy() {
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      toast.success("已复制");
+      setTimeout(() => setCopied(false), 1500);
+    } else {
+      toast.error("复制失败");
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label="复制内容"
+      title="复制"
+      className={cn(
+        "shrink-0 rounded-md p-1 text-muted-foreground/40 transition-colors",
+        "hover:bg-accent hover:text-accent-foreground active:bg-accent",
+      )}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  );
+}
+
+/**
+ * 消息底部的一行：「时间戳 · 引用 · 复制」。
+ * 引用与复制以不同 icon 并排，时间戳在最前；用户消息靠右，助手消息靠左。
+ */
+function EntryActions({
+  entry,
+  onQuote,
+  align,
+  durationMs,
+}: {
+  entry: Entry;
+  onQuote?: (text: string) => void;
+  align: "start" | "end";
+  durationMs?: number;
+}) {
+  const text = blocksToText(entry.blocks);
+  return (
+    <div className={cn("flex items-center gap-1", align === "end" ? "justify-end" : "justify-start")}>
+      {entry.at !== undefined && (
+        <span className="font-mono text-[10px] text-muted-foreground/50">
+          {formatStamp(entry.at)}
+          {durationMs !== undefined && (
+            <span className="text-muted-foreground/55"> · 用时 {formatDuration(durationMs)}</span>
+          )}
+        </span>
+      )}
+      <QuoteButton entry={entry} onQuote={onQuote} />
+      <CopyButton text={text} />
+    </div>
   );
 }
 
@@ -49,8 +123,7 @@ export function EntryRow({ entry, onQuote, turnDurationMs, thinkingDurationMs }:
 
   if (role === "user") {
     return (
-      <div className="group flex items-start justify-end gap-1">
-        <QuoteButton entry={entry} onQuote={onQuote} />
+      <div className="group flex flex-col items-end gap-1">
         <div className="max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground">
           {entry.blocks.map((block, index) => {
             if (block.type === "text") {
@@ -73,12 +146,8 @@ export function EntryRow({ entry, onQuote, turnDurationMs, thinkingDurationMs }:
             }
             return null;
           })}
-          {entry.at !== undefined && (
-            <p className="mt-1 text-right font-mono text-[10px] text-primary-foreground/50">
-              {formatStamp(entry.at)}
-            </p>
-          )}
         </div>
+        <EntryActions entry={entry} onQuote={onQuote} align="end" />
       </div>
     );
   }
@@ -105,44 +174,32 @@ export function EntryRow({ entry, onQuote, turnDurationMs, thinkingDurationMs }:
   }
 
   return (
-    <div className={cn("group flex items-start gap-1", "text-foreground")}>
-      <div className="min-w-0 flex-1 space-y-1">
+    <div className="group text-foreground">
+      <div className="min-w-0 space-y-1">
         {entry.blocks.map((block, index) => {
-        switch (block.type) {
-          case "thinking":
-            return <ThinkingBlock key={index} text={block.text} durationMs={thinkingDurationMs} />;
-          case "text":
-            return <Markdown key={index} text={block.text} />;
-          case "toolCall":
-            return (
-              <ToolCallCard
-                key={index}
-                name={block.name}
-                input={block.input}
-                result={block.result}
-                isError={block.isError}
-                durationMs={block.durationMs}
-              />
-            );
-          case "toolResult":
-            return <ToolResultBlock key={index} text={block.text} />;
-          default:
-            return null;
-        }
-      })}
-        {entry.at !== undefined && (
-          <p className="pt-0.5 font-mono text-[10px] text-muted-foreground/45">
-            {formatStamp(entry.at)}
-            {turnDurationMs !== undefined && (
-              <span className="text-muted-foreground/55"> · 用时 {formatDuration(turnDurationMs)}</span>
-            )}
-          </p>
-        )}
-      </div>
-      {/* 固定宽度的引用槽：无论这条有没有正文，都占同样的右边距，
-          这样同一条消息里的工具卡片宽度恒定、各行也等宽 */}
-      <div className="flex w-6 shrink-0 justify-end">
-        <QuoteButton entry={entry} onQuote={onQuote} />
+          switch (block.type) {
+            case "thinking":
+              return <ThinkingBlock key={index} text={block.text} durationMs={thinkingDurationMs} />;
+            case "text":
+              return <Markdown key={index} text={block.text} />;
+            case "toolCall":
+              return (
+                <ToolCallCard
+                  key={index}
+                  name={block.name}
+                  input={block.input}
+                  result={block.result}
+                  isError={block.isError}
+                  durationMs={block.durationMs}
+                />
+              );
+            case "toolResult":
+              return <ToolResultBlock key={index} text={block.text} />;
+            default:
+              return null;
+          }
+        })}
+        <EntryActions entry={entry} onQuote={onQuote} align="start" durationMs={turnDurationMs} />
       </div>
     </div>
   );

@@ -9,11 +9,13 @@ import { Markdown } from "./Markdown";
 /**
  * 正在发生的那一行。
  *
- *  - **正文**：流式展示（持续重渲染，末尾带光标）。
- *  - **思考**：不展示思考内容，显示「Thinking… + 用时」——紫色 + 脉冲的大脑图标。
- *  - **工具执行**：显示「Working… + 用时」——琥珀色 + 旋转的齿轮图标。
+ *  - **最终正文**：流式展示（持续重渲染，末尾带光标）。
+ *  - **思考 / 工具**：只显示「Thinking… / Working… + 用时」——紫色大脑 / 琥珀齿轮。
+ *  - **过程性正文（preamble）**：模型在动手前说的「我先看一下…」这类文字，
+ *    不再闪现即消失，而是作为「当前思考结果」贴在状态行下方，持续显示，
+ *    直到出现下一个思考结果或整轮结束（结束随状态行一起消失）。
  *
- * 两类用不同图标/动画/颜色区分，并在后面显示以秒（s）计的用时。
+ * 结束后的历史里，这些过程性正文会被 TurnRow 折叠进过程——展开即可看到其准确位置。
  */
 type StatusKind = "thinking" | "working";
 
@@ -60,33 +62,49 @@ function StatusLine({ kind, seconds }: { kind: StatusKind; seconds: number }) {
 
 export function LiveRow({ live }: { live: LiveView }) {
   const blocks: Block[] = live.message?.blocks ?? [];
-  const textBlocks = blocks.filter((block) => block.type === "text" && block.text.trim().length > 0);
-  const hasText = textBlocks.length > 0;
+  const text = blocks
+    .filter((block) => block.type === "text" && block.text.trim().length > 0)
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n")
+    .trim();
+  const hasText = text.length > 0;
   const hasToolCall = blocks.some((block) => block.type === "toolCall");
 
-  const kind: StatusKind | null = hasText
-    ? null
-    : live.phase === "tools" || hasToolCall
-      ? "working"
-      : "thinking";
+  // 正式答案：有正文、且这条消息里没有工具调用 → 当作最终答案流式展示。
+  const isAnswer = hasText && !hasToolCall;
+  // 过程性正文（preamble）：有正文且伴随工具调用 → 当作「当前思考结果」。
+  const isPreamble = hasText && hasToolCall;
 
-  const seconds = useElapsedSeconds(kind !== null, kind ?? "none");
+  // 记住「当前思考结果」，在出现下一个或整轮结束前一直显示。
+  const [thought, setThought] = useState("");
+  useEffect(() => {
+    if (isPreamble) setThought(text);
+  }, [isPreamble, text]);
+
+  const kind: StatusKind = live.phase === "tools" ? "working" : "thinking";
+  const showStatus = !isAnswer;
+  const seconds = useElapsedSeconds(showStatus, kind);
 
   return (
     <div className="flex items-start gap-1 text-foreground">
       <div className="min-w-0 flex-1 space-y-1">
-        {kind ? (
-          <StatusLine kind={kind} seconds={seconds} />
-        ) : (
+        {isAnswer ? (
           <>
-            {textBlocks.map((block, index) =>
-              block.type === "text" ? <Markdown key={index} text={block.text} /> : null,
-            )}
+            <Markdown text={text} />
             {/* 流式正文末尾的小光标：让它看起来“还在写” */}
             <span
               className="inline-block h-3.5 w-[2px] animate-pulse rounded-full bg-foreground/60 align-middle"
               aria-hidden
             />
+          </>
+        ) : (
+          <>
+            <StatusLine kind={kind} seconds={seconds} />
+            {thought && (
+              <p className="line-clamp-3 whitespace-pre-wrap pl-5 text-[12px] leading-relaxed text-muted-foreground/70">
+                {thought}
+              </p>
+            )}
           </>
         )}
       </div>

@@ -2,6 +2,7 @@ import { Check, Copy } from "lucide-react";
 import { useState, type ComponentPropsWithoutRef } from "react";
 
 import { Button } from "@/components/ui/button";
+import { copyText } from "@/lib/utils";
 
 /** 带复制按钮的代码块。故意不用第三方高亮：先保证正确，再谈好看。 */
 export function CodeBlock({ children, ...rest }: ComponentPropsWithoutRef<"pre">) {
@@ -11,12 +12,10 @@ export function CodeBlock({ children, ...rest }: ComponentPropsWithoutRef<"pre">
     : String(children ?? "");
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(code);
+    const ok = await copyText(code);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* 剪贴板不可用时静默失败 */
     }
   }
 

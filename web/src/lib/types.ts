@@ -41,6 +41,8 @@ export interface Snapshot {
   hasMore?: boolean;
   /** 窗口里最老的 id，往前翻页的游标 */
   oldestEntryId?: number | null;
+  /** 最近一次失败的运行（模型不可达等）；失败时对话里没有内容，只能靠它提示 */
+  runError?: { taskId: number; message: string; reason?: string; at?: number } | null;
   live: LiveView | null;
   usage: { models?: Record<string, Usage>; tools?: Record<string, Usage> } | null;
   agent: { model?: { provider?: string; modelId?: string }; cwd?: string } | null;

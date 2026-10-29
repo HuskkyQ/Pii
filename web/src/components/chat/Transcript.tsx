@@ -7,6 +7,7 @@ import { DIVIDER_GAP, formatDivider } from "@/lib/time";
 import { EntryRow } from "./EntryRow";
 import { LiveRow } from "./LiveRow";
 import { LoadingOlder } from "./LoadingOlder";
+import { RunErrorBanner } from "./RunErrorBanner";
 import { TranscriptSkeleton } from "./TranscriptSkeleton";
 import { TurnRow, groupTurns } from "./TurnRow";
 
@@ -40,6 +41,8 @@ export function Transcript({
   loadingOlder = false,
   onLoadOlder,
   onQuote,
+  runError,
+  onRetry,
 }: {
   snapshot: Snapshot | null;
   /** 往前翻出来的历史（拼在快照窗口前面） */
@@ -48,6 +51,9 @@ export function Transcript({
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
   onQuote?: (text: string) => void;
+  /** 上一轮失败的原因（模型不可达等） */
+  runError?: { taskId: number; message: string; reason?: string; at?: number } | null;
+  onRetry?: () => void;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -176,17 +182,10 @@ export function Transcript({
               )}
 
               {isLast && busy ? (
-                // 只有「正在跑的这一轮」才把过程摊开（你想看它此刻在干什么）。
-                // 已经跑完的，哪怕是最后一轮也折叠 —— 你只要最终正文。
-                turn.entries.map((entry) => (
-                  <div key={entry.id} className="space-y-4">
-                    <EntryRow
-                      entry={entry}
-                      onQuote={onQuote}
-                      thinkingDurationMs={turnThinking.get(entry.id) ?? entry.thinkingMs}
-                    />
-                  </div>
-                ))
+                // 进行中：过程（思考 / 工具 / 中间正文）一律收起，只留用户这条消息。
+                // 此刻到底在干嘛（Thinking / Working）以及最终正文的流式展示，
+                // 统一交给下方 <LiveRow> 呈现；结束后 busy=false 自动切到 TurnRow 的折叠态。
+                turn.user ? <EntryRow entry={turn.user} onQuote={onQuote} /> : null
               ) : (
                 <TurnRow
                   turn={turn}
@@ -201,6 +200,7 @@ export function Transcript({
         })}
 
         {live && <LiveRow live={live} />}
+        {!live && <RunErrorBanner error={runError ?? null} onRetry={onRetry} />}
         <div ref={bottom} />
       </div>
     </ScrollArea>

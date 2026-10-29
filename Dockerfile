@@ -34,7 +34,9 @@ VOLUME ["/data"]
 EXPOSE 8787
 
 # 健康检查走公开路径（开了鉴权后 /api/* 会 401，别拿它当探针）
+# 探针端口必须跟运行时一致：compose 里把 PII_PORT 改成 8443 后，
+# 写死 8787 会让容器永远显示 unhealthy（服务其实是好的）。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:8787/manifest.webmanifest').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PII_PORT||8787)+'/manifest.webmanifest').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["npx", "tsx", "src/server/main.ts"]

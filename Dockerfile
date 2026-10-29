@@ -20,6 +20,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# git：自我更新用。pii 在容器里改的是挂载进来的 /pii-src（git 工作区），
+# 没有 git 就看不到「我到底改了什么」，也没法查历史。
+# （push 权限不在容器里，由宿主机的 /usr/local/bin/pii-deploy 代劳）
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # 源码 + 前端构建产物
 COPY . .
 COPY --from=web /app/web/dist ./web/dist

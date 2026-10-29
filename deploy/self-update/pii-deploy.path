@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch /srv/pii-deploy/request (pii self-update trigger)
+
+[Path]
+PathExists=/srv/pii-deploy/request
+Unit=pii-deploy.service
+
+[Install]
+WantedBy=multi-user.target

@@ -30,6 +30,23 @@ mkdir -p /srv/projects/scratch
 
 然后在 pii 里把该会话的「工作目录」选成 `/projects/your-repo`。
 
+## ⚠️ `PII_CWD` 只在「第一次启动」生效
+
+`cwd` 是 **durable 状态**，第一次 `openAgent()` 时写进 sqlite（`documents` 里 kind=`pi.agent`
+的文档），之后重启都是从库里恢复 —— **改环境变量 `PII_CWD` 不会生效**。
+
+新会话的 cwd 继承「根会话（id=1）」的 cwd，所以想换默认值就改根会话：
+
+```bash
+curl -X POST https://piihub.icu/api/cwd \
+  -H "Authorization: Bearer $(docker exec pii-test cat /data/auth-token)" \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"/projects","conversationId":1}'
+```
+
+改完之后**新**会话就是 `/projects`；老会话 sqlite 里存的是 `/work`，
+靠上面那个 `/srv/projects -> /work` 的兼容挂载继续能用。
+
 `docker-compose.yml` + 根目录 `Caddyfile` 是「一台机器全包」的做法（Caddy 跑容器里）。
 但线上这台（阿里云 47.102.100.84）情况不同：
 

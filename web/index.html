@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- user-scalable=no + maximum-scale：手机上不要双指缩放（这是 App，不是网页） -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#161a21" />
+    <!--
+      内联首屏骨架（关键：不要等 CSS/JS）。
+      以前是三段跳：白屏 → 黑屏 → 内容。把底色和骨架直接写进 HTML，
+      浏览器第一帧就是深色底 + 灰块，React 挂载后原地替换。
+    -->
+    <style>
+      html { background: #161a21; color-scheme: dark; }
+      body { margin: 0; background: #161a21; }
+      #boot-skeleton {
+        position: fixed; inset: 0; padding: 56px 16px 16px;
+        box-sizing: border-box; background: #161a21;
+        display: flex; flex-direction: column; gap: 18px;
+        font: 13px/1.5 -apple-system, system-ui, "PingFang SC", sans-serif;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        #boot-skeleton div { animation: boot-pulse 1.4s ease-in-out infinite; }
+      }
+      #boot-skeleton div { border-radius: 8px; background: #242a33; }
+      #boot-skeleton .right { align-self: flex-end; height: 38px; width: 42%; border-radius: 16px 16px 4px 16px; }
+      #boot-skeleton .line { height: 12px; }
+      #boot-skeleton .w95 { width: 95%; } #boot-skeleton .w80 { width: 80%; }
+      #boot-skeleton .w60 { width: 60%; } #boot-skeleton .w40 { width: 40%; }
+      @keyframes boot-pulse { 0%, 100% { opacity: .55 } 50% { opacity: .95 } }
+    </style>
+    <title>pii</title>
+
+    <!-- PWA：可安装 + iOS 全屏 -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!--
+     为什么不用 black-translucent：
+     在 iOS 26 standalone 上，它会导致「视口高度 = 屏幕高度 - 状态栏高度（59px）」，
+     但 webview 并没有跟着下移 —— 结果顶部要自己补 59px，而屏幕最底部那 59px
+     谁都不画，看起来就是一大块空白（实测：innerHeight 873 / screen 932）。
+     改成 black（不透明状态栏）后，系统自己把内容放到状态栏下方，且铺满到屏幕底。
+  -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="pii" />
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot-skeleton" aria-hidden="true">
+        <div class="right"></div>
+        <div>
+          <div class="line w95"></div>
+          <div class="line w80" style="margin-top:10px"></div>
+          <div class="line w60" style="margin-top:10px"></div>
+        </div>
+        <div class="right" style="width:30%;height:32px"></div>
+        <div>
+          <div class="line w95"></div>
+          <div class="line w60" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

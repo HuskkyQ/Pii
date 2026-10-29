@@ -1,0 +1,42 @@
+{
+  "name": "pii",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted durable agent built on pi-durable, with a browser client.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "tsx src/server/main.ts",
+    "stage0": "tsx src/stage0.ts",
+    "dev:web": "npm --prefix web run dev",
+    "build:web": "npm --prefix web run build",
+    "build": "npm --prefix web run build",
+    "check": "tsc --noEmit && npm --prefix web run build",
+    "shot": "node scripts/shot.mjs",
+    "pwa:check": "node scripts/pwa-check.mjs",
+    "tailscale": "bash scripts/tailscale-setup.sh",
+    "nosleep": "caffeinate -is npm start",
+    "restart": "bash scripts/restart.sh",
+    "service:install": "bash scripts/install-launchd.sh install",
+    "service:status": "bash scripts/install-launchd.sh status",
+    "service:logs": "bash scripts/install-launchd.sh logs",
+    "service:uninstall": "bash scripts/install-launchd.sh uninstall",
+    "apply": "bash scripts/apply.sh"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.14",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "@types/web-push": "^3.6.4",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3"
+  }
+}

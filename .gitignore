@@ -1,0 +1,9 @@
+node_modules
+web/node_modules
+web/dist
+*.log
+.DS_Store
+
+# 运行数据（会话、令牌、推送订阅）绝不能进仓库
+data
+.pii

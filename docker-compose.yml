@@ -1,0 +1,46 @@
+# 部署到云服务器：docker compose up -d
+#
+# 两个容器：
+#   pii    —— 应用本体（监听 8787，不对外暴露，只给 caddy 用）
+#   caddy  —— 反向代理 + 自动 https 证书（占 80/443）
+#
+# 需要在同目录建一个 .env：
+#   PII_DOMAIN=pii.example.com          # 指向这台服务器的域名
+#   PII_VAPID_SUBJECT=mailto:you@x.com  # 推送用，Apple 会校验
+#   WORK_DIR=/srv/projects              # 宿主机上给 agent 干活的目录
+services:
+  pii:
+    build: .
+    restart: unless-stopped
+    environment:
+      # 公网必须开鉴权，否则谁都能让它跑 bash
+      PII_AUTH: "1"
+      PII_VAPID_SUBJECT: ${PII_VAPID_SUBJECT:-mailto:pii@example.com}
+      PII_CWD: /work
+    volumes:
+      - pii-data:/data                                  # 会话、令牌、推送订阅
+      - ${WORK_DIR:-./work}:/work                       # agent 的文件世界
+      - ${HOME}/.pi/agent/models.json:/root/.pi/agent/models.json:ro
+    # 不发布端口：只有 caddy 能连它
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - pii
+    environment:
+      PII_DOMAIN: ${PII_DOMAIN:?需要 PII_DOMAIN，例如 pii.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pii-data:
+  caddy-data:
+  caddy-config:

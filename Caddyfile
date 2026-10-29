@@ -1,0 +1,15 @@
+# Caddy 自动申请并续期 Let's Encrypt 证书 —— 这就是「https 那一半」。
+# 域名从 docker-compose 的 PII_DOMAIN 传进来。
+{$PII_DOMAIN} {
+	encode zstd gzip
+
+	# SSE 必须关掉缓冲，否则流式回答会被憋住
+	reverse_proxy pii:8787 {
+		flush_interval -1
+	}
+
+	# 推送/登录页都不该被中间缓存
+	header {
+		-Server
+	}
+}

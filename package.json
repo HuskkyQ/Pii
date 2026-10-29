@@ -23,7 +23,8 @@
     "service:status": "bash scripts/install-launchd.sh status",
     "service:logs": "bash scripts/install-launchd.sh logs",
     "service:uninstall": "bash scripts/install-launchd.sh uninstall",
-    "apply": "bash scripts/apply.sh"
+    "apply": "bash scripts/apply.sh",
+    "bridge": "node scripts/model-bridge.mjs"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

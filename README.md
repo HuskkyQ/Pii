@@ -502,6 +502,81 @@ launchctl bootout gui/$(id -u)/com.sevan.pii   # ✅ 这才是「停」
 | 自建一个 OpenAI 兼容网关 | ✅ 只要服务器能访问到，baseUrl 指过去就行 |
 | 让 Mac 继续当网关 | ⚠️ VPS 装 Tailscale，models.json 里 baseUrl 改成 `http://<Mac 的 tailnet IP>:3425`。能用，但 Mac 必须开机 —— “搬到服务器”的意义只剩一半 |
 
+### 模型在 Mac 上（magpie）怎么搬到服务器
+
+magpie 是 Mac 桌面应用，只监听 `127.0.0.1:3425`，服务器碰不到它。两种做法：
+
+#### 做法 A：Mac 做「模型中转」，pii 跑在服务器（推荐）
+
+```text
+手机 ──https──> 云服务器 (pii + Caddy)  ──tailnet──> Mac ──> magpie ──> 上游大模型
+                数据/前端/推送都在这      ↑ 这一段就是中转
+```
+
+服务器上 `models.json` 只改一行：
+
+```json
+"baseUrl": "http://100.x.y.z:13425/v1"     // Mac 的 tailnet 地址 + 中转端口
+```
+
+Mac 上跑中转（`npm run bridge`）：
+
+```bash
+BRIDGE_LISTEN=100.124.109.19:13425 npm run bridge
+# 监听   100.124.109.19:13425
+# 转发到 127.0.0.1:3425（magpie）
+```
+
+**为什么用 TCP 透传而不是 HTTP 代理**：magpie 回复是 SSE 流式，TCP 层原样转发
+一个字节都不动，流式天然就对（实测流式 delta 正常穿过）。
+
+实测（Mac 本机经 tailnet 地址回环，不代表真实服务器→Mac 的 RTT）：
+
+```
+GET  /v1/models            200 | 38KB | 77ms
+POST /chat/completions     "畅通无阻"
+POST 流式 (stream:true)    data: {"delta":{"content":"一，"}} … 正常
+```
+
+**为什么中转端口不用 3425**：3425 已被 magpie 自己占着，用 13425 之类。
+
+#### 做法 B：SSH 反向隧道（零代码，更私密）
+
+```bash
+# Mac 上
+ssh -N -R 127.0.0.1:13425:127.0.0.1:3425 user@服务器
+# 服务器上 models.json： "baseUrl": "http://127.0.0.1:13425/v1"
+```
+
+优点：不需要 tailnet，magpie 完全不暴露（只有那条 SSH 连接能碰到它）。
+缺点：SSH 断了要重连（用 `autossh` 或 launchd 守着）。
+
+#### 必须知道的三个约束
+
+| 约束 | 后果 |
+|---|---|
+| **Mac 必须开着且 magpie 在跑** | Mac 睡了/关了 → 服务器上每次提问都会 `model_error`。这等于把「永远在线」的收益砍掉一半 |
+| 多一跳 | 服务器→Mac 的 RTT（tailnet 直连通常 20~60ms；走 DERP 中继可能 150ms+）。对模型调用（秒级）无感 |
+| magpie 不校验 key | 中转暴露给整个 tailnet 就能被用。建议用 tailnet ACL 只允许那台服务器访问该端口 |
+
+#### 如果哪天不想依赖 Mac
+
+在服务器上的 `models.json` 加一个官方 provider 即可（DeepSeek / 火山 / 阿里 / OpenAI…），
+`baseUrl` + `apiKey` 两行，代码不用改。两条路可以并存：给不同会话选不同模型。
+
+#### 做法 C：pii 留在 Mac，服务器只做反向代理（最省事）
+
+```text
+手机 ──https──> 云服务器 (Caddy) ──SSH -R 8787──> Mac 上的 pii
+```
+
+- 模型调用**完全不增加跳数**（pii 就在 Mac 上，直连 magpie）
+- 前端、推送、https 全部由服务器承担 → 手机不用开 Tailscale、不受 Funnel 境外入口拖累
+- 代价：Mac 必须开着（本来也是这样）；数据仍在 Mac
+
+如果只是想解决「手机打开慢 + 开 VPN 就不能用」，**做法 C 改动最小、当天就能上**；
+想要「数据在服务器、Mac 只当模型网关」，就用做法 A。
+
 ### 一条命令部署
 
 仓库里已经有：`Dockerfile` / `docker-compose.yml` / `Caddyfile`。
@@ -857,6 +932,8 @@ PII_HOST=0.0.0.0 npm start     # 手机访问 http://<Mac 的局域网 IP>:8787
   手机经 VPN 绕境外入口，单程 300~500ms —— 这是「10 秒」的区域性原因，
   根治办法是部署到国内云服务器（见「部署到云服务器」）
 - ✅ **滚动按需加载**：滚到距顶 320px 自动取下一页，插入后补 `scrollTop`（视野不跳）
+- ✅ **模型中转**：`scripts/model-bridge.mjs`（TCP 透传）把 Mac 的 magpie 暴露到 tailnet；
+  实测 `/v1/models` 200/38KB、非流式返回「畅通无阻」、流式 delta 正常穿过
 - ✅ **按轮窗口**：首屏 5 轮（52 条），上滑再取 5 轮（78 条），两页零重叠；加载有骨架动效
 - ✅ **归档 + 压缩**：`POST /api/compact` 触发压缩前，`beforeCompact` 钩子把 605 条原文
   归档成 1.5MB markdown（只增不改）；手动归档 338 条 → 1.2MB

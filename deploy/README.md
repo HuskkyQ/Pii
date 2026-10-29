@@ -3,7 +3,7 @@
 ## 宿主机上的目录约定
 
 ```
-/srv/projects/            ← 「项目根」。agent 的文件世界，一行一个项目
+/srv/pii-projects/        ← 「用 pii 创作的项目」的根。agent 的文件世界，一个子目录一个项目
     my-app/                   agent 在这里干活（git clone 出来的仓库）
     .pii-backup/              旧的手工备份（已废弃，留着当历史）
 /srv/pii-src/             ← pii 自己的源码（部署副本，只 pull 不手改）
@@ -15,20 +15,21 @@
 
 | 宿主机 | 容器内 | 用途 |
 |---|---|---|
-| `/srv/projects` | `/projects` | `PII_CWD` 默认值 |
-| `/srv/projects` | `/work` | 兼容别名（老会话 cwd 存的是 `/work`） |
+| `/srv/pii-projects` | `/pii-projects` | `PII_CWD` 默认值（规范路径） |
+| `/srv/pii-projects` | `/work` | 兼容别名：最早的老会话 cwd 存的是它 |
+| `/srv/pii-projects` | `/projects` | 兼容别名：中间版本用过一阵 |
 | `/opt/pii-test/data` | `/data` | sqlite |
 | `/opt/pii-test/models/models.json` | `/root/.pi/agent/models.json` | 只读 |
 
 **新建一个项目**（在宿主机上做，因为容器里没有 git）：
 
 ```bash
-git clone git@github.com:you/your-repo.git /srv/projects/your-repo
+git clone git@github.com:you/your-repo.git /srv/pii-projects/your-repo
 # 或者在 pii 界面里新建一个空目录，然后在对话里让 agent 干活：
-mkdir -p /srv/projects/scratch
+mkdir -p /srv/pii-projects/scratch
 ```
 
-然后在 pii 里把该会话的「工作目录」选成 `/projects/your-repo`。
+然后在 pii 里把该会话的「工作目录」选成 `/pii-projects/your-repo`。
 
 ## ⚠️ `PII_CWD` 只在「第一次启动」生效
 
@@ -41,11 +42,11 @@ mkdir -p /srv/projects/scratch
 curl -X POST https://piihub.icu/api/cwd \
   -H "Authorization: Bearer $(docker exec pii-test cat /data/auth-token)" \
   -H 'Content-Type: application/json' \
-  -d '{"path":"/projects","conversationId":1}'
+  -d '{"path":"/pii-projects","conversationId":1}'
 ```
 
-改完之后**新**会话就是 `/projects`；老会话 sqlite 里存的是 `/work`，
-靠上面那个 `/srv/projects -> /work` 的兼容挂载继续能用。
+改完之后**新**会话就是 `/pii-projects`；老会话 sqlite 里存的是 `/work` 或 `/projects`，
+靠上面那两个同源兼容挂载继续能用。
 
 `docker-compose.yml` + 根目录 `Caddyfile` 是「一台机器全包」的做法（Caddy 跑容器里）。
 但线上这台（阿里云 47.102.100.84）情况不同：

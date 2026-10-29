@@ -77,8 +77,10 @@ console.log("\n[1] externalizeImages 纯逻辑");
 		},
 	] as never;
 	const r = await externalizeImages(msgs, async () => "/t.png");
-	check("toolResult 里的图片也替换", r.replaced === 1);
-	check("toolResult 的元信息保留", (r.messages[0] as never as { toolName: string }).toolName === "read");
+	check("toolResult 的图片默认不动（模型 read 回来的要能看）", r.replaced === 0);
+	const forced = await externalizeImages(msgs, async () => "/t.png", { roles: ["toolResult"] });
+	check("显式指定 roles 时才处理 toolResult", forced.replaced === 1);
+	check("toolResult 的元信息保留", (forced.messages[0] as never as { toolName: string }).toolName === "read");
 }
 {
 	const msgs = [{ role: "user", content: [{ type: "text", text: "x" }], timestamp: 1 }] as never;

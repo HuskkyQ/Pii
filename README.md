@@ -805,6 +805,52 @@ POST /api/compact → taskId 1482
 | `PII_COMPACT_KEEP` | 20000 | 最近多少 token 的原文保留不动 |
 | `PII_COMPACT_OFF` | — | `1` 关闭自动压缩 |
 
+### 图片外置（context-guard for pii）
+
+和归档不同：归档管“旧对话”，图片外置管“图太占地方”。
+
+**问题**：一张截图进来就是 base64，每轮请求原样重发一遍。
+40 张截图 ≈ 20MB 请求体 + 每轮重复计费，长会话必然爆窗口（实测爆过一次 69 万 token）。
+
+**做法**（学 Codex 的 `ImageReference::File`）：
+
+```text
+用户发图
+  → base64 存进 entry（SQLite，不动，网页端靠 /api/image 照常显示）
+  → GenerationTask.beforeRequest（每次请求前）
+      → 落盘成 <数据目录>/images/<sha256>.png
+      → 请求里换成文本标记 [image: /data/images/xxxx.png]
+  → 模型真要看内容时，用现成的 read 打开那个路径（read 本来就支持读图）
+```
+
+**为什么只外置 `user` 的图，不动 `toolResult` 的**：
+模型 `read` 一张图，结果里就是 `image` block —— 那是它刚主动要看的，
+再外置一次等于“读了也看不到”。实测（未修版本）：模型看不见图，只好绕道
+`bash` + Python 去读 PNG 像素，多花一轮工具调用才答出颜色。
+
+实测（同一张纯蓝方块）：
+
+```
+日志：图片外置 1 张 → /tmp/pii-test/images
+entry 7  user      : [text] 这张图是什么颜色？ [image]   ← entry 里原图还在
+entry 11 assistant : read /tmp/pii-test/images/22cc9d9d2c1fdabf.png   ← 模型读落盘文件
+entry 13 tool-result: [image]                            ← 原样保留，模型看到了
+entry 15 assistant : 这张图是蓝色。                      ← 一次 read 直接答对
+```
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PII_IMAGE_REF` | 开 | `0` 关闭（原图照旧进上下文，用于对比/排查） |
+| `PII_IMAGE_REF_QUIET` | — | `1` 不打印「图片外置 N 张」的日志 |
+
+两个要知道的代价：
+
+- **双份存储**：图片既在 SQLite（网页显示用）又在 `images/`（模型读用）。只增不减，跟归档一样。
+  截图几百 KB 一张，量不大；真要清就手动删 `images/` 里用不到的。
+- **模型多一步**：看不见图 → 先 `read` 一次。这是设计使然，换来的是一张图从 1200 token/轮变成约 15 token/轮。
+
 ## 手机 + PWA（阶段 4）
 
 ### 为什么必须要 https

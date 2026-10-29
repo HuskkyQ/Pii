@@ -24,6 +24,8 @@ import type { Message } from "@earendil-works/pi-ai";
 export interface ImageRefOptions {
 	/** 图片落盘目录，通常是 `<数据目录>/images` */
 	imageDir: string;
+	/** 哪几种 role 的图片要外置。默认只有 `user`（工具返回的图是模型自己要看的）。 */
+	roles?: readonly string[];
 	/** 关掉就把原图放回去（调试用） */
 	enabled?: boolean;
 	/** 落盘失败时是否放行原图。默认 true：宁可多花 token，也不要让用户看不见图 */
@@ -54,6 +56,10 @@ function extensionFor(mimeType: string): string {
 	return sub.replace(/[^a-z0-9]/g, "") || "png";
 }
 
+/** 默认只处理用户发的图。`toolResult` 里的图是模型自己 `read` 回来的，
+ *  必须原样保留，否则 read 就白读了（实测模型会绕到 bash 里用 Python 读像素）。 */
+const DEFAULT_ROLES = ["user"] as const;
+
 /**
  * 纯函数：把 messages 里的图片换成路径标记。
  *
@@ -62,7 +68,9 @@ function extensionFor(mimeType: string): string {
 export async function externalizeImages(
 	messages: readonly Message[],
 	persist: (block: ImageBlock) => Promise<string>,
+	scope: { roles?: readonly string[] } = {},
 ): Promise<{ messages: Message[]; replaced: number; bytes: number }> {
+	const roles = new Set(scope.roles ?? DEFAULT_ROLES);
 	let replaced = 0;
 	let bytes = 0;
 	let hinted = false;
@@ -70,6 +78,11 @@ export async function externalizeImages(
 
 	for (const message of messages) {
 		const content = (message as { content?: unknown }).content;
+		const role = (message as { role?: unknown }).role;
+		if (!roles.has(typeof role === "string" ? role : "")) {
+			out.push(message);
+			continue;
+		}
 		if (!Array.isArray(content) || !content.some(isImageBlock)) {
 			out.push(message);
 			continue;
@@ -135,7 +148,9 @@ export function imageRefExtension(options: ImageRefOptions) {
 
 					let result;
 					try {
-						result = await externalizeImages(request.messages, persist);
+						result = await externalizeImages(request.messages, persist, {
+							...(options.roles ? { roles: options.roles } : {}),
+						});
 					} catch (error) {
 						if (passThrough) {
 							console.warn(`  图片外置失败，本轮放行原图：${(error as Error).message}`);

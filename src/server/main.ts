@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { compress } from "hono/compress";
 import { streamSSE } from "hono/streaming";
 
@@ -35,7 +35,7 @@ import { DatabaseSync } from "node:sqlite";
 import { openAgent, resolveCwd, resolveDataDir } from "../agent.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
 import { archiveEntries, listArchives, readArchive } from "./archive.ts";
-import { createAuth } from "./auth.ts";
+import { COOKIE_TTL_WEEK, createAuth, type LoginMode } from "./auth.ts";
 import { keepAwake } from "./awake.ts";
 import { createConversation, listConversations, openConversation, parseConversationId, titleOf } from "./conversations.ts";
 import { LastConversation } from "./last-conversation.ts";
@@ -186,7 +186,11 @@ console.log(`  推送      ${push.enabled ? `开（订阅 ${push.list().length} 
 const awake = keepAwake();
 console.log(`  睡眠      ${awake.active ? "阻止省电睡眠（锁屏照跑；合盖仍会睡）" : "照系统设置"}`);
 console.log(
-  `  鉴权      ${auth.enabled ? `开（令牌：cat ${join(dataDir, "auth-token")}）` : "关（PII_AUTH=1 可开）"}`,
+  `  鉴权      ${
+    auth.enabled
+      ? `开（令牌：cat ${join(dataDir, "auth-token")}${auth.passwordEnabled ? "；账号密码：开，7 天免登录" : "；账号密码：未配"}）`
+      : "关（PII_AUTH=1 可开）"
+  }`,
 );
 
 /**
@@ -284,6 +288,28 @@ app.use(compress());
  * manifest / service worker / 图标 / 带指纹的静态资源。
  * 这些不含任何数据，泄露了也没关系；真正的数据和操作都在 /api/* 后面。
  */
+/**
+ * 登录失败限速：按客户端 IP 记「错了几次 / 锁到什么时候」。
+ *
+ * 为什么按 IP 而不是一个全局计数：全局计数等于给了别人一把锁 ——
+ * 故意错几次就能把你关在门外（拒绝服务）。
+ *
+ * 为什么光有延时不够、还要真锁：`setTimeout` 是**每个请求各睡各的**。
+ * 开 20 条并发连接，「每次等 1.5 秒」立刻被摊成 13 次/秒。真正的阻力来自
+ * 「第 6 次起锁 5 分钟」，睡眠只是让暴力猜变慢，不是防线本身。
+ *
+ * 为什么不落库：登录失败记录是短命数据，重启后清零可以接受。
+ */
+const LOGIN_FREE_TRIES = 5; // 前 5 次只退避，不锁
+const LOGIN_LOCK_MS = 5 * 60_000; // 第 6 次失败起锁 5 分钟
+const loginFailures = new Map<string, { n: number; lockUntil: number }>();
+
+/** 取真实客户端 IP：Caddy 会带 X-Forwarded-For；直连时退回一个固定标记 */
+function clientIp(c: Context): string {
+  const forwarded = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "";
+  return forwarded.split(",")[0]?.trim() || "direct";
+}
+
 if (auth.enabled) {
   const PUBLIC = [
     "/login",
@@ -305,19 +331,60 @@ if (auth.enabled) {
       c.header("Set-Cookie", auth.cookieFor(c));
       return c.redirect("/");
     }
-    return c.html(auth.loginPage("/", false));
+    return c.html(auth.loginPage({ next: "/" }));
   });
 
   app.post("/login", async (c) => {
-    const body = (await c.req.parseBody().catch(() => ({}))) as { token?: string; next?: string };
+    const body = (await c.req.parseBody().catch(() => ({}))) as {
+      token?: string;
+      user?: string;
+      pass?: string;
+      next?: string;
+    };
     const next = typeof body.next === "string" && body.next.startsWith("/") ? body.next : "/";
+    // 失败后要停在原来那一栏：提交了 user/pass 就是密码栏，否则是令牌栏
+    const mode: LoginMode = typeof body.user === "string" || typeof body.pass === "string" ? "pw" : "token";
+
+    const ip = clientIp(c);
+    const entry = loginFailures.get(ip) ?? { n: 0, lockUntil: 0 };
+    if (Date.now() < entry.lockUntil) {
+      // 锁定期内连凭证都不比对：既不耗 CPU，也不给对方「猜对/猜错」的时序线索
+      const wait = Math.ceil((entry.lockUntil - Date.now()) / 1000);
+      return c.html(
+        auth.loginPage({ next, failed: true, mode, note: `尝试过于频繁，请 ${wait} 秒后再试` }),
+        429,
+      );
+    }
+
+    // ① 令牌 → cookie 一年（行为与以前完全一致，含 /?token= 链路）
     if (auth.matches(typeof body.token === "string" ? body.token.trim() : undefined)) {
+      loginFailures.delete(ip);
       c.header("Set-Cookie", auth.cookieFor(c));
       return c.redirect(next);
     }
-    // 失败越多等越久（最多 3 秒）
-    await new Promise((resolve) => setTimeout(resolve, Math.min(3000, 500 * 3)));
-    return c.html(auth.loginPage(next, true), 401);
+
+    // ② 账号密码 → cookie 七天（人定的密码熵低，短一点更稳）
+    if (auth.checkPassword(body.user, body.pass)) {
+      loginFailures.delete(ip);
+      c.header("Set-Cookie", auth.cookieFor(c, COOKIE_TTL_WEEK));
+      return c.redirect(next);
+    }
+
+    // ③ 失败：累加 → 超限锁定 → 否则指数退避（1s / 2s / 4s / 8s 封顶）
+    entry.n += 1;
+    if (entry.n > LOGIN_FREE_TRIES) entry.lockUntil = Date.now() + LOGIN_LOCK_MS;
+    loginFailures.set(ip, entry);
+    // Map 不能无限长：来源过多就整体清空（失败记录不值得精确回收）
+    if (loginFailures.size > 1000) loginFailures.clear();
+
+    if (entry.n > LOGIN_FREE_TRIES) {
+      return c.html(
+        auth.loginPage({ next, failed: true, mode, note: "连续失败过多，已锁定 5 分钟" }),
+        429,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(8, 2 ** (entry.n - 1)) * 1000));
+    return c.html(auth.loginPage({ next, failed: true, mode }), 401);
   });
 
   app.use("*", async (c, next) => {
@@ -329,7 +396,7 @@ if (auth.enabled) {
       return c.json({ error: "未登录，先访问 /login 输入令牌" }, 401);
     }
     // 页面请求：直接给登录页（独立窗口里也能用，不需要地址栏）
-    return c.html(auth.loginPage(path, false), 401);
+    return c.html(auth.loginPage({ next: path }), 401);
   });
 }
 

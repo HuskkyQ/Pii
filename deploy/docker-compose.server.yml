@@ -15,6 +15,12 @@ services:
     image: pii:server
     container_name: pii-test
     restart: unless-stopped
+    # 账号密码登录的凭证（PII_USER / PII_PASS_HASH）放在宿主机文件里，
+    # 权限 600，**不进仓库**。用 `npm run hash-pass` 生成哈希。
+    # required: false —— 文件不存在时容器照样能起（只有令牌登录可用）。
+    env_file:
+      - path: /opt/pii-test/secrets/pii.env
+        required: false
     environment:
       PII_AUTH: "1"
       # 默认工作目录 = 项目根。每个项目是 /pii-projects/<名字> 一个子目录。

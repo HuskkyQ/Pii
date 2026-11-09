@@ -15,6 +15,7 @@
     "build": "npm --prefix web run build",
     "check": "tsc --noEmit && npm --prefix web run build",
     "shot": "node scripts/shot.mjs",
+    "hash-pass": "node scripts/hash-password.mjs",
     "pwa:check": "node scripts/pwa-check.mjs",
     "tailscale": "bash scripts/tailscale-setup.sh",
     "nosleep": "caffeinate -is npm start",

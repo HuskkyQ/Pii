@@ -604,7 +604,55 @@ docker compose logs -f pii
 
 - `pii` 容器**不发布端口**，只有 `caddy` 能连它 —— 对外只有 80/443
 - `PII_AUTH=1` 写在 compose 里，**公网必须开**；令牌在 `docker compose exec pii cat /data/auth-token`
+- 想用账号密码登录（比令牌好记，但只给 **7 天** 免登），见下一节
 - `models.json` 是只读挂载进容器的（`~/.pi/agent/models.json`）。它里面有**明文密钥**，别进 git
+
+### 鉴权：令牌 / 账号密码两种登录方式
+
+两种方式**同时存在**，登录页用 Tab 切换，种的是同一个 cookie（`pii_token`），只是有效期不同：
+
+| 登录方式 | 凭证来源 | cookie 有效期 | 为什么是这个数 |
+|---|---|---|---|
+| 令牌 | `PII_TOKEN` 或 `data/auth-token`（32 字节随机） | **一年** | 机器生成的 256 位密钥猜不出来，图省事 |
+| 账号密码 | `PII_USER` + `PII_PASS_HASH` | **七天** | 人定的密码熵低，短一点更稳 |
+| `/?token=xxx` 链接 | 同上令牌 | 一年 | 手机上点一次就进（magic link） |
+
+**开账号密码**（三步，不用改仓库里任何文件）：
+
+```bash
+# 1) 在 Mac 上生成哈希（密码交互输入、不回显、只输出哈希）
+npm run hash-pass -- huskky
+
+# 2) 服务器上写凭证文件，权限 600
+mkdir -p /opt/pii-test/secrets && chmod 700 /opt/pii-test/secrets
+printf 'PII_USER=huskky\nPII_PASS_HASH=scrypt$...$...\n' > /opt/pii-test/secrets/pii.env
+chmod 600 /opt/pii-test/secrets/pii.env
+
+# 3) 重建容器让 env_file 生效
+docker compose -f deploy/docker-compose.server.yml up -d
+```
+
+`docker-compose.server.yml` 里用 `env_file` + `required: false` 引入：文件不存在就是「只有令牌登录」，
+所以新机器不配也能直接起。**哈希绝不能写进 compose**——那是 git 跟踪的文件。
+
+哈希格式 `scrypt$<salt>$<hash>`，参数 N=16384/r=8/p=1，校验端在 `src/server/auth.ts`，
+用的是 `node:crypto` 自带的 scrypt（不引 bcrypt，少一个依赖）。
+
+**失败限速**（`src/server/main.ts` 的 `POST /login`）：按客户端 IP 记账，与令牌/密码共用一套计数。
+
+| 第几次失败 | 行为 |
+|---|---|
+| 1～5 | 指数退避：1s → 2s → 4s → 8s（封顶 8s） |
+| 6 次起 | HTTP 429 + **锁 5 分钟**（锁定期内连凭证都不比对） |
+| 任意一次成功 | 计数清零 |
+
+> 早先这里写的是 `Math.min(3000, 500 * 3)` —— 恒定 1.5 秒，注释却说「失败越多等越久」。
+> 而且 `setTimeout` 是每个请求各睡各的，开 20 条并发就把 1.5 秒摊成 13 次/秒。
+> 真正的阻力是「第 6 次起锁 5 分钟」，睡眠只是减速带。
+
+还有一个可选变量：`PII_TOKEN_HINT`（默认 `cat <数据目录>/auth-token`），
+用来改登录页那句「在服务器上执行 …」。容器里数据目录是 `/data`，宿主机是 `/opt/pii-test/data`，
+想让提示写宿主机路径就设成 `cat /opt/pii-test/data/auth-token`。
 
 **没有域名也能上**：用 `1.2.3.4.sslip.io`（把 IP 写成域名）当 `PII_DOMAIN`，
 Caddy 照样能申请到真证书，PWA 和推送都能用。

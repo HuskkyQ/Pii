@@ -1,5 +1,5 @@
 import { FolderPlus, Loader2, MessageSquare, Plus, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { ConversationSummary } from "@/lib/types";
@@ -147,6 +147,9 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
   );
 }
 
+/** 抽屉进出场时长（毫秒）。位移和遮罩淡入淡出共用，改这里两边一起变。 */
+const DRAWER_ANIM_MS = 260;
+
 /**
  * 桌面：左侧固定栏。手机：从左边滑出的抽屉（点遮罩关闭）。
  *
@@ -154,16 +157,54 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
  * 刷新页面也不会丢，还省掉一个 router 依赖。
  */
 export function ConversationsPanel({ open, onClose, ...list }: PanelProps) {
+  // 进出场动画：open 变 true 先挂载、下一帧再切到「展开」触发过渡；
+  // 变 false 先切回「收起」，等动画播完再卸载，避免生硬地一闪就没。
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(open);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      // 连等两帧：第一帧把「收起」样式真正画出来，第二帧再切到「展开」，
+      // 否则 React 可能把两步合到一次绘制里，transition 不触发。
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setShown(true));
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+      };
+    }
+    setShown(false);
+    const timer = window.setTimeout(() => setMounted(false), DRAWER_ANIM_MS);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
   return (
     <>
       <aside className="hidden w-60 shrink-0 border-r md:block">
         <ConversationList {...list} />
       </aside>
 
-      {open && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-black/45" onClick={onClose} aria-hidden />
-          <div className="absolute inset-y-0 left-0 flex w-[78%] max-w-[300px] flex-col border-r bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl">
+      {mounted && (
+        <div className={cn("fixed inset-0 z-50 md:hidden", !shown && "pointer-events-none")}>
+          <div
+            className={cn(
+              "absolute inset-0 bg-black/45 transition-opacity ease-out motion-reduce:transition-none",
+              shown ? "opacity-100" : "opacity-0",
+            )}
+            style={{ transitionDuration: `${DRAWER_ANIM_MS}ms` }}
+            onClick={onClose}
+            aria-hidden
+          />
+          <div
+            className={cn(
+              "absolute inset-y-0 left-0 flex w-[78%] max-w-[300px] flex-col border-r bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl transition-transform ease-out will-change-transform motion-reduce:transition-none",
+              shown ? "translate-x-0" : "-translate-x-full",
+            )}
+            style={{ transitionDuration: `${DRAWER_ANIM_MS}ms` }}
+          >
             <div className="flex shrink-0 justify-end px-2 pt-2">
               <Button size="icon" variant="ghost" className="size-8" onClick={onClose} aria-label="关闭">
                 <X className="size-4" />

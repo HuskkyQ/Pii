@@ -625,12 +625,25 @@ npm run hash-pass -- huskky
 
 # 2) 服务器上写凭证文件，权限 600
 mkdir -p /opt/pii-test/secrets && chmod 700 /opt/pii-test/secrets
-printf 'PII_USER=huskky\nPII_PASS_HASH=scrypt$...$...\n' > /opt/pii-test/secrets/pii.env
+printf 'PII_USER=huskky\nPII_PASS_HASH=scrypt$$...$$...\n' > /opt/pii-test/secrets/pii.env
 chmod 600 /opt/pii-test/secrets/pii.env
 
 # 3) 重建容器让 env_file 生效
 docker compose -f deploy/docker-compose.server.yml up -d
 ```
+
+> ⚠️ **哈希里的 `$` 必须写成 `$$`**。Docker Compose 会插值 `env_file` 里的 `$`：
+> 单个 `$` 后面的字符会被当成变量名，名字未定义就翻成空，哈希被默默改掉（实测：
+> 76 字符变 66 字符，登录永远失败且报错只是「密码不对」）。`npm run hash-pass`
+> 输出的那行已经帮你转义好了，直接整行粘贴即可。
+>
+> 验证注入是否完整（比对长度和 sha，不打印���值）：
+>
+> ```bash
+> F=$(grep '^PII_PASS_HASH=' /opt/pii-test/secrets/pii.env | cut -d= -f2- | sed 's/\$\$/\$/g')
+> C=$(docker exec pii-test printenv PII_PASS_HASH)
+> [ "$F" = "$C" ] && echo 一致 || echo 被改写了
+> ```
 
 `docker-compose.server.yml` 里用 `env_file` + `required: false` 引入：文件不存在就是「只有令牌登录」，
 所以新机器不配也能直接起。**哈希绝不能写进 compose**——那是 git 跟踪的文件。

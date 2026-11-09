@@ -150,5 +150,9 @@ if (pass1 !== pass2) {
 
 console.log("\n把下面两行写进服务器上的 /opt/pii-test/secrets/pii.env（权限 600）：\n");
 console.log(`PII_USER=${user}`);
-console.log(`PII_PASS_HASH=${hash(pass1)}`);
-console.log("\n（哈希可以公开：它不能反推出密码。但请把原始密码存进密码管理器。）");
+// `$` 成对：Docker Compose 会插值 env_file 里的 `$`，单个 `$` 后面的字符
+// 会被当成变量名（未定义就删空），哈希就被默默改写了。
+// 写进文件时用 `$$`，Compose 读完后容器里看到的是单个 `$`，应用照常解析。
+console.log(`PII_PASS_HASH=${hash(pass1).replaceAll("$", "$$")}`);
+console.log("\n↑ 哈希里的 $$ 是给 Docker Compose 的转义，直接整行粘贴即可。");
+console.log("  （哈希本身可以公开：它不能反推出密码。但请把原始密码存进密码管理器。）");

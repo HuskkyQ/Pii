@@ -7,3 +7,6 @@ web/dist
 # 运行数据（会话、令牌、推送订阅）绝不能进仓库
 data
 .pii
+
+# spec-workflow 插件的模板缓存（不是项目内容）
+.spec-workflow

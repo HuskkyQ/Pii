@@ -28,7 +28,7 @@ services:
       PII_HOST: 0.0.0.0
       PII_PORT: "8443"
       PII_PROVIDER: magpie
-      PII_MODEL: mac/auto/gemini-2.5-flash-lite
+      PII_MODEL: workbuddy/deepseek-v4.1-flash
       PII_DATA_DIR: /data
       # 这台机器只有 1.8G 内存，限制 node 堆，避免把 teslamate 挤死
       NODE_OPTIONS: --max-old-space-size=384

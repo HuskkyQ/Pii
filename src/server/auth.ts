@@ -96,6 +96,8 @@ export interface Auth {
   checkPassword(candidateUser: unknown, candidatePass: unknown): boolean;
   /** 种 cookie 用（https 下才加 Secure；maxAge 默认一年） */
   cookieFor(c: Context, maxAge?: number): string;
+  /** 清 cookie 用（退出登录）：Max-Age=0 让浏览器立刻删掉它 */
+  clearCookie(c: Context): string;
   loginPage(opts: LoginPageOptions): string;
 }
 
@@ -167,6 +169,21 @@ export function createAuth(dataDir: string): Auth {
         "SameSite=Lax",
         `Max-Age=${maxAge}`,
       ];
+      if (secure) parts.push("Secure");
+      return parts.join("; ");
+    },
+
+    /**
+     * 登出 = 把同一个 cookie 覆盖成过期。
+     *
+     * 为什么不能只「前端删掉 cookie」：这个 cookie 是 HttpOnly，JS 读不到也改不了 ——
+     * 这正是当初选它的理由（XSS 偷不走凭证），代价就是**清它也必须走服务端**。
+     * Path / SameSite / Secure 三个属性要和种的时候完全一致，否则浏览器当成另一个
+     * cookie，删了个空气，登录状态还在。
+     */
+    clearCookie(c: Context): string {
+      const secure = c.req.header("x-forwarded-proto") === "https" || c.req.url.startsWith("https://");
+      const parts = [`${COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
       if (secure) parts.push("Secure");
       return parts.join("; ");
     },

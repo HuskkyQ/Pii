@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import type { ConnectionState, Snapshot } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+import { LogoutButton } from "./LogoutButton";
 import { PushToggle } from "./PushToggle";
 
 /** 只保留「多少 token / 花了多少」，模型名交给窄屏外的位置显示，避免移动端挤爆。 */
@@ -179,6 +180,8 @@ export function StatusBar({ connection, snapshot, title, onOpenMenu, onRename, c
       </span>
 
       <PushToggle conversationId={conversationId} />
+      {/* 退出登录：只在开了鉴权时出现，且只在桌面 —— 手机状态栏塞不下这么多按钮 */}
+      <LogoutButton />
     </header>
   );
 }

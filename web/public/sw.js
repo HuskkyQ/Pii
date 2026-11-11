@@ -9,7 +9,7 @@
  * 明确不做的事：**不缓存 /api/**。
  * 会话数据必须永远走网络 —— 快照是权威，缓存会让界面显示过期状态。
  */
-const VERSION = "pii-v5";
+const VERSION = "pii-v6";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -70,6 +70,19 @@ self.addEventListener("fetch", (event) => {
    * 这里，照样能跑；下次打开就换成新的了。数据永远是 /api 实时拉的，不受影响。
    */
   if (request.mode === "navigate") {
+    /*
+     * 例外：/login 和 /logout **必须走网络**。
+     *
+     * 这两个地址的内容取决于 cookie —— 缓存里只有一个「登录前/登录后」都长一样的壳。
+     * 退出登录后浏览器跳 /login，如果被壳拦下，用户看到的是一个没登录的界面
+     * （所有接口 401、头部写着「断开，重连中…」），**连登录框都出不来**，只能手动清站点数据。
+     * 这个 bug 只有退出登录功能上线后才会天天被撞到，所以在这里锁死。
+     */
+    if (url.pathname === "/login" || url.pathname === "/logout") {
+      event.respondWith(fetch(request).catch(() => new Response("离线", { status: 503 })));
+      return;
+    }
+
     event.respondWith(
       (async () => {
         const cache = await caches.open(VERSION);

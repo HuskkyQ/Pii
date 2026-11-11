@@ -387,6 +387,31 @@ if (auth.enabled) {
     return c.html(auth.loginPage({ next, failed: true, mode }), 401);
   });
 
+  /**
+   * 退出登录：把 cookie 清掉，再回登录页。
+   *
+   * 三条路都留着，因为退出登录的代价不一样：
+   *   GET  /logout      地址栏能敲、书签能存、JS 坏了也能用（手机上最需要这条）
+   *   POST /logout      表单/按钮用，不带副作用语义上的争议
+   *   POST /api/logout  前端按钮用，回 JSON，由前端决定跳哪儿
+   *
+   * GET 有副作用在理论上是缺点（别人的网页放个 `<img src="/logout">` 就能把你踢下线），
+   * 但退出的最坏结果只是重输一次密码 —— 为它加 CSRF 令牌不值。
+   *
+   * 注意这三条都注册在下面的鉴权中间件**之前**：cookie 已经过期的人也得能点退出，
+   * 否则他会卡在「登录页 + 一个删不掉的旧 cookie」之间。
+   */
+  const logout = (c: Context) => {
+    c.header("Set-Cookie", auth.clearCookie(c));
+    return c.redirect("/login");
+  };
+  app.get("/logout", logout);
+  app.post("/logout", logout);
+  app.post("/api/logout", (c) => {
+    c.header("Set-Cookie", auth.clearCookie(c));
+    return c.json({ ok: true });
+  });
+
   app.use("*", async (c, next) => {
     const path = c.req.path;
     if (isPublic(path) || auth.allowed(c)) return next();
@@ -399,6 +424,14 @@ if (auth.enabled) {
     return c.html(auth.loginPage({ next: path }), 401);
   });
 }
+
+/**
+ * 前端用它决定状态栏要不要显示「退出登录」。
+ *
+ * 为什么不让前端自己猜：没开鉴权时 /logout 压根没注册（没有 cookie 可清），
+ * 点了只会 404。这个问题只有服务端答得准。
+ */
+app.get("/api/auth", (c) => c.json({ enabled: auth.enabled, password: auth.passwordEnabled }));
 
 app.get("/", (c) => {
   // 构建过就托管 React；否则退回阶段 2 的测试页。

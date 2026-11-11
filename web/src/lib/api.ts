@@ -146,6 +146,23 @@ export function createConversation() {
   return postJson<{ id: number; title: string }>("/api/conversations", {});
 }
 
+/** 服务端有没有开鉴权 —— 没开就没有「退出登录」这回事。 */
+export function getAuthInfo() {
+  return getJson<{ enabled: boolean; password: boolean }>("/api/auth");
+}
+
+/**
+ * 退出登录：请服务端清 cookie（HttpOnly，JS 自己删不掉），再回登录页。
+ *
+ * 为什么不直接 `location.href = "/logout"`：那样等于把 GET 当命令用，
+ * 而且浏览器可能在历史记录里留一条「刚才那个地址能登出」。按钮走 POST，地址栏那条
+ * 留给手敲 —— 两条服务端都支持。
+ */
+export async function logout(): Promise<void> {
+  await postJson<{ ok: boolean }>("/api/logout", {});
+  location.href = "/login";
+}
+
 /** 服务端记住的“上次在看的会话”（localStorage 的兜底）。 */
 export function getLastConversation() {
   return getJson<{ conversationId: number | null }>("/api/last-conversation");

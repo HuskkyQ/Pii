@@ -63,6 +63,7 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
         )}
         {items.map((item) => {
           const active = item.id === activeId;
+          const canDelete = Boolean(onDelete);
 
           if (pending === item.id) {
             return (
@@ -97,32 +98,47 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
           return (
             <div key={item.id} className="group/row relative">
               <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelect(item.id)}
-              aria-current={active ? "true" : undefined}
-              className={cn(
-                "mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] transition-colors",
-                active
-                  ? "bg-accent text-accent-foreground"
-                  : "text-foreground/80 hover:bg-accent/60 hover:text-accent-foreground",
-              )}
-            >
-              <MessageSquare className="size-3.5 shrink-0 opacity-55" aria-hidden />
+                type="button"
+                onClick={() => onSelect(item.id)}
+                aria-current={active ? "true" : undefined}
+                className={cn(
+                  "mt-0.5 flex w-full items-center gap-2 rounded-md py-2 pl-2 text-left text-[13px] transition-colors",
+                  // 给右侧的垃圾桶留 32px：不留的话长标题会被图标压住最后两个字。
+                  // 所有行都留（而不是只给选中行），这样每行截断位置一致，切换会话时
+                  // 标题不会左右跳一下。
+                  canDelete ? "pr-8" : "pr-2",
+                  active
+                    ? "bg-accent text-accent-foreground"
+                    : "text-foreground/80 hover:bg-accent/60 hover:text-accent-foreground",
+                )}
+              >
+                <MessageSquare className="size-3.5 shrink-0 opacity-55" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{item.title}</span>
                 {item.busy && (
                   <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-label="运行中" />
                 )}
               </button>
 
-              {onDelete && active && (
+              {/*
+               * 不能用普通按钮兄弟节点：一行只有一个 <button> 才不会嵌套按钮，
+               * 所以删除按钮绝对定位盖在行右侧 —— 上面那个 pr-8 就是给它留的位。
+               *
+               * 选中行常显（手机上点一下就选中，接着就能删）；其他行只在鼠标悬停时
+               * 现身 —— 平时藏着不抢戏，也避免误点到一行右下角就弹出删除确认。
+               */}
+              {canDelete && (
                 <button
                   type="button"
                   onClick={() => setPending(item.id)}
                   disabled={deleting === item.id}
                   aria-label="删除这个会话"
                   title="删除这个会话"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/50 hover:bg-destructive/15 hover:text-destructive"
+                  className={cn(
+                    "absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground/50 transition-opacity hover:bg-destructive/15 hover:text-destructive",
+                    active
+                      ? "opacity-100"
+                      : "pointer-events-none opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+                  )}
                 >
                   {deleting === item.id ? (
                     <Loader2 className="size-3.5 animate-spin" />

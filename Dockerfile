@@ -16,16 +16,26 @@ RUN npm run build
 FROM ${NODE_IMAGE}
 WORKDIR /app
 
+# 系统依赖：git 是「自我更新」用的 —— pii 在容器里改的是挂载进来的 /pii-src（git 工作区），
+# 没有 git 就看不到「我到底改了什么」，也没法查历史。
+# （push 权限不在容器里，由宿主机的 /usr/local/bin/pii-deploy 代劳）
+#
+# 为什么放最前面：这层跟 npm 依赖无关，package*.json 变动时仍能命中缓存。
+# 以前 apt 排在 npm ci 后面 —— 一改依赖就重拉一遍 Debian 包，国内机器实测 17KB/s，
+# 能卡半小时以上。顺序换一下就把这个坑填了。
+# 国内机器换源：compose 里传 build.args.APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=deb.debian.org
+RUN set -eux; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do \
+      if [ -f "$f" ]; then sed -i "s|deb.debian.org|${APT_MIRROR}|g" "$f"; fi; \
+    done; \
+    apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # 服务端依赖（含 tsx）
 COPY package.json package-lock.json ./
 RUN npm ci
-
-# git：自我更新用。pii 在容器里改的是挂载进来的 /pii-src（git 工作区），
-# 没有 git 就看不到「我到底改了什么」，也没法查历史。
-# （push 权限不在容器里，由宿主机的 /usr/local/bin/pii-deploy 代劳）
-RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
 
 # 源码 + 前端构建产物
 COPY . .

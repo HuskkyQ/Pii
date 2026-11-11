@@ -12,6 +12,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # 国内这台机器访问 deb.debian.org 实测只有 17KB/s（装 git 能卡半小时），
+      # 换阿里云源几十秒就完。换源逻辑写在 Dockerfile 的 apt 那一层里。
+      args:
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
     image: pii:server
     container_name: pii-test
     restart: unless-stopped

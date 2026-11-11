@@ -689,10 +689,9 @@ app.post("/api/archive", async (c) => {
   );
   if (!conversation) return c.json({ error: "会话不存在" }, 404);
 
-  const state = await conversation.viewState(BACKGROUND_CONTEXT);
-  const value = state.value;
-  state.dispose();
-  if (!value) return c.json({ error: "视图尚未就绪" }, 503);
+  const watch_ = await conversation.watch(BACKGROUND_CONTEXT, VIEW_WINDOW);
+  const value = watch_.value;
+  await watch_.stop();
 
   const snapshot = projectView(value, { durationOf: taskDuration });
   const result = archiveEntries({
@@ -926,6 +925,19 @@ app.get("/api/build", (c) => {
 /** 一屏大概 5 轮对话（用户消息 + 最终回答 = 2 条 → 10 条）。 */
 const SNAPSHOT_TURNS = Number(process.env.PII_SNAPSHOT_TURNS ?? 5);
 
+/**
+ * `Conversation.watch()` 的视图窗口大小（pi-durable 1.5 起 `viewState()` 被它取代）。
+ *
+ * 为什么显式开这么大：watch 的视图是**窗口化**的 —— 默认只留最近 50 条、最多 100 条，
+ * 超过上限就从最老的开始丢。但 pii 是「服务端拿全量、自己按轮切窗口」：
+ * 翻页游标 `?before=` 需要能翻到很早以前，窗口一旦封顶，历史就会凭空消失。
+ * 所以开到比任何真实会话都大，行为与升级前一致（真正省内存的做法是按需分页）。
+ */
+const VIEW_WINDOW = {
+  min: Number(process.env.PII_VIEW_ENTRIES ?? 2000),
+  max: Number(process.env.PII_VIEW_ENTRIES ?? 2000),
+};
+
 function windowOptions(input: { turns?: string; limit?: string; before?: string }) {
   const turns = input.turns === undefined ? SNAPSHOT_TURNS : Number(input.turns);
   const limit = input.limit === undefined ? undefined : Number(input.limit);
@@ -942,10 +954,9 @@ function windowOptions(input: { turns?: string; limit?: string; before?: string 
 app.get("/api/state", async (c) => {
   const conversation = await resolveConversation(parseConversationId(c.req.query("c")));
   if (!conversation) return c.json({ error: "会话不存在" }, 404);
-  const state = await conversation.viewState(BACKGROUND_CONTEXT);
-  const value = state.value;
-  state.dispose();
-  if (!value) return c.json({ error: "视图尚未就绪" }, 503);
+  const watch_ = await conversation.watch(BACKGROUND_CONTEXT, VIEW_WINDOW);
+  const value = watch_.value;
+  await watch_.stop();
   const snapshot = projectView(
     value,
     windowOptions({
@@ -1097,7 +1108,7 @@ app.get("/api/stream", async (c) => {
   const scope = Number(conversation.id);
 
   return streamSSE(c, async (stream) => {
-    const state = await conversation.viewState(BACKGROUND_CONTEXT);
+    const view = await conversation.watch(BACKGROUND_CONTEXT, VIEW_WINDOW);
     let closed = false;
     watch(scope, 1);
 
@@ -1139,10 +1150,10 @@ app.get("/api/stream", async (c) => {
       timer.unref?.();
     };
 
-    const initial = state.value;
     {
+      // `value` 在 start 之前就是「挂载那一刻的视图」，正好当首帧。
       const options = windowOptions({ turns: c.req.query("turns") });
-      if (initial) pushSnapshot(projectView(initial, options));
+      pushSnapshot(projectView(view.value, options));
     }
 
     // 重连时把仍挂起的审批补发一次，否则新开的标签页看不到它们；
@@ -1150,7 +1161,12 @@ app.get("/api/stream", async (c) => {
     for (const request of approvals.list(scope)) emit("approval", request);
 
     const streamOptions = windowOptions({ turns: c.req.query("turns") });
-    const unsubscribe = state.subscribe((value) => pushSnapshot(projectView(value, streamOptions)));
+    // 1.5.x 的 watch：start 之后每次视图变化推一次 `{ kind: "value", value }`；
+    // 视图自身出错推 `{ kind: "failed", error }` —— 这里不动，等下一次提交或客户端重连恢复。
+    view.start(async (call) => {
+      if (call.kind === "failed") return;
+      pushSnapshot(projectView(call.value, streamOptions));
+    });
     const offRequest = approvals.onRequest((request: ApprovalRequest) => {
       if (request.conversationId === scope) emit("approval", request);
     });
@@ -1167,10 +1183,9 @@ app.get("/api/stream", async (c) => {
         watch(scope, -1);
         if (timer) clearTimeout(timer);
         clearInterval(heartbeat);
-        unsubscribe();
+        void view.stop();
         offRequest();
         offOutcome();
-        state.dispose();
         resolve();
       });
     });

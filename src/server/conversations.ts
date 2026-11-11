@@ -63,7 +63,7 @@ export async function titleOf(conversation: Conversation): Promise<string> {
  * 最新在前的会话列表。
  *
  * `busy` 从 `harness.inspect()` 的「未结算提交」推出来：
- * 有排队/正在跑的输入就是 busy。比自己per会话去读 viewState 便宜得多。
+ * 有排队/正在跑的输入就是 busy。比每个会话各挂一个 `Conversation.watch()` 便宜得多。
  */
 export async function listConversations(
   agent: Agent,

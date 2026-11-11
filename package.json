@@ -28,9 +28,9 @@
     "bridge": "node scripts/model-bridge.mjs"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
     "@hono/node-server": "^2.1.5",
     "hono": "^4.13.14",
     "web-push": "^3.6.7"

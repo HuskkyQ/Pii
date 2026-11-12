@@ -1,18 +1,20 @@
 /**
- * 会话快照、列表、审批策略、改名、上次会话。
+ * 会话快照、列表、新建、删除、审批策略、改名、上次会话。
  *
  * 纯搬迁：路由行为保持原样，依赖通过 AppContext 显式传入。
  */
 import type { Hono } from "hono";
+import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createConversation, listConversations, parseConversationId, titleOf } from "../conversations.ts";
 import { normalizePolicy, presetOf } from "../policies.ts";
 import { projectView } from "../project.ts";
 import { TITLE_MAX } from "../titles.ts";
+import { purgeConversations } from "../trash.ts";
 import type { AppContext } from "../context.ts";
 
 export function registerSession(app: Hono, ctx: AppContext): void {
-  const { policies, lastConversation, watch, titles, customTitles, trash, agent, latestFailure, windowOptions, resolveConversation, viewWindow: VIEW_WINDOW } = ctx;
+  const { dataDir, policies, lastConversation, watch, watching, titles, customTitles, trash, agent, latestFailure, windowOptions, resolveConversation, viewWindow: VIEW_WINDOW } = ctx;
 
 /** 权威快照。`?c=<id>` 选会话，不传就是 root；`?before=&limit=` 往前翻页。 */
 app.get("/api/state", async (c) => {
@@ -128,5 +130,32 @@ app.patch("/api/conversations/:id", async (c) => {
   titles.set(id, effective);
 
   return c.json({ ok: true, id, title: effective, custom: Boolean(title) });
+});
+
+/** 删除会话：先藏起来（立刻生效），再尽量当场把行删干净。 */
+app.delete("/api/conversations/:id", async (c) => {
+  const id = parseConversationId(c.req.param("id"));
+  if (id === undefined) return c.json({ error: "id 不合法" }, 400);
+  if (id === Number(agent.root.id)) return c.json({ error: "root 会话不能删" }, 400);
+  if (watching.get(id)) return c.json({ error: "先切到别的会话再删（这个还开着）" }, 409);
+
+  // 有活没干完就别删，否则任务会往一个不存在的会话里写
+  const inspection = await agent.harness.inspect(BACKGROUND_CONTEXT);
+  if (inspection.submissions.some((item) => Number(item.conversationId) === id)) {
+    return c.json({ error: "这个会话还有没跑完的任务，等它结束再删" }, 409);
+  }
+
+  trash.hide(id);
+  const result = purgeConversations({
+    dbPath: join(dataDir, "agent.sqlite"),
+    ids: [id],
+  });
+  if (result.deleted.length > 0) trash.forget(result.deleted);
+  titles.delete(id);
+  customTitles.forget(id);
+  policies.forget(id);
+  lastConversation.forget(id);
+
+  return c.json({ ok: true, deletedRows: result.deleted.length > 0 });
 });
 }

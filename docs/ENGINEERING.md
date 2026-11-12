@@ -41,7 +41,15 @@ src/
     ├── titles.ts     自定义会话标题（用户改名后落 conversation-titles.json，覆盖自动标题）
     ├── push.ts        Web Push：VAPID 密钥 + 订阅表 + 发送/剪枝
     ├── project.ts     ConversationView → 前端 JSON（含 pi.live 的流式半截投影）
-    └── page.ts        阶段 2 的降级测试页（没构建前端时用）
+    ├── page.ts        阶段 2 的降级测试页（没构建前端时用）
+    └── routes/        每个文件一个领域，registerX(app, ctx) 签名就是依赖清单
+        ├── session.ts   快照 / 会话增删改 / 审批策略 / 上次会话
+        ├── run.ts       提问、中断、SSE、审批回答
+        ├── models.ts    模型清单与切换
+        ├── push.ts      推送公钥 / 订阅 / 退订 / 自测
+        ├── ops.ts       客户端指标 / 优雅重启 / 构建信息
+        ├── workspace.ts cwd / 目录浏览 / 导入外部对话
+        └── archive.ts   压缩 / 归档列表与读取 / 手动导出 / 图片本体
 
 web/                   前端（Vite + React + TS + Tailwind v4 + shadcn/ui）
 ├── src/App.tsx              布局 + `?c=<id>` 路由 + 会话切换

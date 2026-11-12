@@ -16,10 +16,13 @@ import { loadConfig } from "../config.ts";
 import { createContext } from "./context.ts";
 import { registerAuth } from "./auth-routes.ts";
 import { registerStatic } from "./static.ts";
-import { registerFiles } from "./routes/files.ts";
-import { registerMeta } from "./routes/meta.ts";
+import { registerArchive } from "./routes/archive.ts";
+import { registerModels } from "./routes/models.ts";
+import { registerOps } from "./routes/ops.ts";
+import { registerPush } from "./routes/push.ts";
 import { registerRun } from "./routes/run.ts";
 import { registerSession } from "./routes/session.ts";
+import { registerWorkspace } from "./routes/workspace.ts";
 
 const config = loadConfig();
 const port = config.port;
@@ -45,8 +48,12 @@ app.use(compress());
  */
 if (ctx.auth.enabled) registerAuth(app, ctx);
 registerStatic(app, ctx);
-registerMeta(app, ctx);
-registerFiles(app, ctx);
+// 业务路由：顺序无关（路径不重叠），位置固定在其余位置 —— 见上面的铁律 ③
+registerOps(app, ctx);
+registerModels(app, ctx);
+registerPush(app, ctx);
+registerWorkspace(app, ctx);
+registerArchive(app, ctx);
 registerSession(app, ctx);
 registerRun(app, ctx);
 

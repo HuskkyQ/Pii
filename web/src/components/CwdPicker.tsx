@@ -8,6 +8,7 @@ import type { DirListing } from "@/lib/types";
 
 interface CwdPickerProps {
   open: boolean;
+  anchor?: HTMLElement | null;
   conversationId?: number;
   onClose: () => void;
   onPicked: (cwd: string) => void;

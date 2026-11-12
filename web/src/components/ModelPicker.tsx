@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 interface ModelPickerProps {
   open: boolean;
+  anchor?: HTMLElement | null;
   conversationId?: number;
   current?: { provider?: string; modelId?: string } | null;
   onClose: () => void;

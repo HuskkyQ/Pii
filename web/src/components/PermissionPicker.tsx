@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 interface PermissionPickerProps {
   open: boolean;
+  anchor?: HTMLElement | null;
   /** 当前会话策略；null = 还在加载 */
   policy: ToolPolicy | null;
   preset: PresetId | null;

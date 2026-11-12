@@ -14,11 +14,11 @@
 # 从境外 deb.debian.org 重下 22MB 包（这台机器实测 17KB/s），一次部署跑了 2622 秒。
 #
 # 为什么用 `docker compose build` 而不是 `DOCKER_BUILDKIT=1 docker build`：
-#   这台服务器上 ~/.docker/cli-plugins/docker-buildx 是个 228KB 的残缺文件，
-#   盖住了系统里正常的 64MB 插件，显式开 BuildKit 会直接段错误：
-#     failed to fetch metadata: signal: segmentation fault
-#   Compose v2 用自己内置的 BuildKit，不依赖这个 CLI 插件 —— 生产镜像本来就是它构建的。
-#   实测同一份代码：9 秒完成、9 层 CACHED。
+#   服务器上 ~/.docker/cli-plugins/docker-buildx 曾是个 228KB 的残缺文件，
+#   盖住了系统里正常的 64MB 插件，显式开 BuildKit 会段错误；现已重命名备份修复。
+#   但构建入口仍统一到 Compose 内置 BuildKit（不依赖 CLI 插件）：
+#   两条部署路径共用同一套缓存，也不再受宿主机插件状态影响。
+#   实测同一份代码：1 秒完成、11 层 CACHED（修复前 2622 秒）。
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

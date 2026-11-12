@@ -4,10 +4,13 @@ import test from "node:test";
 import {
   PICKER_EDGE,
   PICKER_GAP,
+  PICKER_MAX_HEIGHT,
   PICKER_WIDTH,
   clampPickerLeft,
   desiredPickerLeft,
   pickerBottom,
+  pickerMaxHeight,
+  pickerVerticalPlacement,
   resolvePickerLeft,
 } from "../src/lib/picker-position.ts";
 
@@ -43,4 +46,23 @@ test("resolvePickerLeft：组合 start / end", () => {
   const rect = { left: 100, right: 180 };
   assert.equal(resolvePickerLeft(rect, "start", 1280), 100);
   assert.equal(resolvePickerLeft(rect, "end", 1280), 12);
+});
+
+test("pickerMaxHeight：取 70dvh 与 520px 的较小值", () => {
+  assert.equal(PICKER_MAX_HEIGHT, 520);
+  assert.equal(pickerMaxHeight(800), 520);
+  assert.equal(pickerMaxHeight(600), 420);
+});
+
+test("pickerVerticalPlacement：底部 chip 上方空间够，向上弹", () => {
+  assert.deepEqual(pickerVerticalPlacement({ top: 767, bottom: 790 }, 800), { bottom: 41 });
+});
+
+test("pickerVerticalPlacement：侧栏顶部按钮上方不够，改向下弹", () => {
+  assert.deepEqual(pickerVerticalPlacement({ top: 8, bottom: 36 }, 800), { top: 44 });
+});
+
+test("pickerVerticalPlacement：向下也放不下时夹在视口内", () => {
+  const result = pickerVerticalPlacement({ top: 160, bottom: 188 }, 600);
+  assert.deepEqual(result, { top: 172 });
 });

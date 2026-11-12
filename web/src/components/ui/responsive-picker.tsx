@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { pickerBottom, resolvePickerLeft, type PickerAlign } from "@/lib/picker-position";
+import {
+  pickerVerticalPlacement,
+  resolvePickerLeft,
+  type PickerAlign,
+  type PickerVerticalPlacement,
+} from "@/lib/picker-position";
 
 const DESKTOP_QUERY = "(min-width: 768px)";
 
@@ -22,7 +27,7 @@ interface Viewport {
 
 interface PanelLayout {
   left: number;
-  bottom: number;
+  vertical: PickerVerticalPlacement;
 }
 
 /**
@@ -41,6 +46,7 @@ export function ResponsivePicker({
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const panelRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
+  const lastAnchor = useRef<HTMLElement | null>(null);
   const [viewport, setViewport] = useState<Viewport>(() => ({
     width: window.innerWidth,
     height: window.innerHeight,
@@ -79,9 +85,18 @@ export function ResponsivePicker({
   }, [open, isDesktop]);
 
   useEffect(() => {
-    if (wasOpen.current && !open) anchor?.focus();
-    wasOpen.current = open;
+    if (open && anchor) lastAnchor.current = anchor;
   }, [open, anchor]);
+
+  useEffect(() => {
+    // App 关闭时会把 anchor 也清空，所以要用上一次记下来的按钮归还焦点。
+    // 放到下一帧：等浏览器处理完 Esc / 点击的默认行为，再抢回焦点。
+    if (wasOpen.current && !open) {
+      const target = lastAnchor.current;
+      requestAnimationFrame(() => target?.focus());
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   const layout = useMemo<PanelLayout | null>(() => {
     if (!open || !isDesktop) return null;
@@ -92,7 +107,7 @@ export function ResponsivePicker({
     if (!rect || !valid) return null;
     return {
       left: resolvePickerLeft(rect, align, viewport.width),
-      bottom: pickerBottom(rect.top, viewport.height),
+      vertical: pickerVerticalPlacement(rect, viewport.height),
     };
   }, [open, isDesktop, anchor, align, viewport.width, viewport.height]);
 
@@ -114,7 +129,7 @@ export function ResponsivePicker({
             role="dialog"
             aria-modal="true"
             aria-label={label}
-            style={{ left: layout.left, bottom: layout.bottom }}
+            style={{ left: layout.left, ...layout.vertical }}
             className={`fixed z-[70] ${panelClass}`}
           >
             {inner}

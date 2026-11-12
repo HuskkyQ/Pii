@@ -10,3 +10,6 @@ data
 
 # spec-workflow 插件的模板缓存（不是项目内容）
 .spec-workflow
+
+# 隔离工作区（superpowers worktrees）
+.worktrees/

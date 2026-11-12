@@ -1,12 +1,8 @@
-import { ChevronRight, Wrench } from "lucide-react";
-import { useState } from "react";
-
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { Entry } from "@/lib/types";
-import { formatDuration } from "@/lib/time";
-import { cn } from "@/lib/utils";
+import { stepsFromEntries } from "@/lib/process-steps";
 
 import { EntryRow } from "./EntryRow";
+import { ProcessRail } from "./ProcessRail";
 
 export interface Turn {
   /** 这一轮的 key（用第一条 entry 的 id） */
@@ -81,92 +77,53 @@ export function groupTurns(entries: Entry[]): Turn[] {
   return turns;
 }
 
-/** 折叠摘要：只要这一轮花了多久。 */
-function summarize(turn: Turn): { chars: number; tools: number; durationMs?: number } {
-  let chars = 0;
-  let tools = 0;
-  for (const entry of turn.process) {
-    for (const block of entry.blocks) {
-      if (block.type === "thinking") chars += block.text.length;
-      if (block.type === "toolCall") tools += 1;
-    }
-  }
-  const durationMs =
-    turn.startAt !== undefined && turn.final?.at !== undefined
-      ? Math.max(0, (turn.final.at as number) - turn.startAt)
-      : undefined;
-  return { chars, tools, durationMs };
+/** 这一轮从提问到回答的总时长。 */
+function turnDuration(turn: Turn): number | undefined {
+  return turn.startAt !== undefined && turn.final?.at !== undefined
+    ? Math.max(0, (turn.final.at as number) - turn.startAt)
+    : undefined;
 }
 
 /**
- * 已完成的一轮：你的话 → （折叠的过程）→ 最终回答。
+ * 已完成的一轮：你的话 → （过程轨道）→ 最终回答。
  *
- * 折叠的判定很保守：只有「这一轮已经结束（后面还有别的轮）」才折。
- * 最后一轮永远展开 —— 那通常是你正在看的东西。
+ * 过程默认收起，但**用户展开过的一轮不会自己收回去** —— 展开状态由上层
+ * （Transcript）按轮 key 记住，运行中看着它长出来的那一轮，结束后还摊在那里。
  */
 export function TurnRow({
   turn,
   onQuote,
   thinkingDurationMs,
+  railOpen,
+  onRailOpenChange,
 }: {
   turn: Turn;
   onQuote?: (text: string) => void;
   thinkingDurationMs?: number;
+  railOpen?: boolean;
+  onRailOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const { durationMs } = summarize(turn);
-  const hasProcess = turn.process.length > 0;
+  const durationMs = turnDuration(turn);
+  const thinkingOverride =
+    turn.final && thinkingDurationMs !== undefined
+      ? { entryId: turn.final.id, ms: thinkingDurationMs }
+      : undefined;
+  const steps = stepsFromEntries(turn.process, thinkingOverride);
 
   return (
     <div className="space-y-4">
       {turn.user && <EntryRow entry={turn.user} onQuote={onQuote} />}
 
-      {hasProcess && (
-        <Collapsible open={open} onOpenChange={setOpen}>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "group/process flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left",
-                "text-[12px] text-muted-foreground transition-colors hover:text-foreground",
-              )}
-            >
-              <ChevronRight
-                className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-                aria-hidden
-              />
-              <Wrench className="size-3 shrink-0 opacity-60" aria-hidden />
-              {/* 折叠时只说「已完成 + 用时」，细节点开再看 */}
-              <span className="min-w-0 truncate">
-                {durationMs !== undefined
-                  ? `已完成 ${formatDuration(durationMs)}`
-                  : `已完成 · ${turn.process.length} 步`}
-              </span>
-              <span className="ml-auto shrink-0 text-[11px] opacity-60">
-                {open ? "收起" : "展开"}
-              </span>
-            </button>
-          </CollapsibleTrigger>
-
-          <CollapsibleContent className="mt-1 space-y-2 border-l border-border/60 pl-3">
-            {turn.process
-              // 展开后按原始顺序展示每一步（思考 / 工具 / 中间正文都保留），
-              // 这样「过程性正文」能在它准确的位置看到；折叠时则整块收起。
-              .filter((entry) => entry.blocks.length > 0)
-              .map((entry) => (
-                <EntryRow key={entry.id} entry={entry} onQuote={onQuote} />
-              ))}
-          </CollapsibleContent>
-        </Collapsible>
-      )}
+      {/* 空步骤时 rail 自己返回 null（思考被拆干净、只剩正文的情况） */}
+      <ProcessRail
+        steps={steps}
+        durationMs={durationMs}
+        open={railOpen}
+        onOpenChange={onRailOpenChange}
+      />
 
       {turn.final && (
-        <EntryRow
-          entry={turn.final}
-          onQuote={onQuote}
-          turnDurationMs={durationMs}
-          thinkingDurationMs={thinkingDurationMs}
-        />
+        <EntryRow entry={turn.final} onQuote={onQuote} turnDurationMs={durationMs} />
       )}
     </div>
   );

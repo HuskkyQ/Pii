@@ -35,7 +35,7 @@ export function ApprovalCards({ approvals, onDecide }: ApprovalCardsProps) {
               {Math.max(0, Math.round((request.expiresAt - Date.now()) / 1000))} 秒后自动拒绝
             </span>
           </div>
-          <pre className="mt-2 max-h-[26vh] overflow-auto rounded-md border border-amber-500/20 bg-background/60 p-2.5 font-mono text-[12px] leading-relaxed">
+          <pre className="glass mt-2 max-h-[26vh] overflow-auto rounded-md border p-2.5 font-mono text-[12px] leading-relaxed">
             {JSON.stringify(request.input, null, 2)}
           </pre>
           <div className="mt-2.5 flex items-center gap-2">

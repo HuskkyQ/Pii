@@ -80,7 +80,6 @@ export function ModelPicker({ open, anchor, conversationId, current, onClose, on
       anchor={anchor}
       align="end"
       label="切换模型"
-      mobileMaxHeight="78dvh"
       onClose={onClose}
     >
       {() => (
@@ -114,7 +113,7 @@ export function ModelPicker({ open, anchor, conversationId, current, onClose, on
             {!loading &&
               groups.map(([provider, list]) => (
                 <div key={provider} className="mt-2">
-                  <div className="sticky top-0 z-10 bg-background/95 px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground/70 backdrop-blur">
+                  <div className="glass sticky top-0 z-10 px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
                     {provider}
                   </div>
                   {list.map((model) => {

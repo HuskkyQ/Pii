@@ -3,11 +3,10 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Markdown } from "./Markdown";
-import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCallCard } from "./ToolCallCard";
-import { ToolResultBlock } from "./ToolResultBlock";
+import { ProcessRail } from "./ProcessRail";
 import type { Entry } from "@/lib/types";
 import { blocksToQuote, formatDuration, formatStamp } from "@/lib/time";
+import { stepsFromEntries } from "@/lib/process-steps";
 import { cn, copyText } from "@/lib/utils";
 
 interface EntryRowProps {
@@ -16,8 +15,6 @@ interface EntryRowProps {
   onQuote?: (text: string) => void;
   /** 这一轮任务的总时长（毫秒）；只在最终回答上给，显示在时间戳后面 */
   turnDurationMs?: number;
-  /** 这一轮思考的总用时（毫秒）；仅本次运行测得到，历史消息可能没有 */
-  thinkingDurationMs?: number;
 }
 
 /** 整条 entry 的纯文本（用于「复制」，不截断）。 */
@@ -118,7 +115,7 @@ function EntryActions({
 }
 
 /** 一条 entry → 一组 block。角色决定气泡样式。 */
-export function EntryRow({ entry, onQuote, turnDurationMs, thinkingDurationMs }: EntryRowProps) {
+export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
   const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "assistant" : "meta";
 
   if (role === "user") {
@@ -153,52 +150,18 @@ export function EntryRow({ entry, onQuote, turnDurationMs, thinkingDurationMs }:
   }
 
   if (role === "meta") {
-    return (
-      <div className="space-y-1">
-        {entry.blocks.map((block, index) =>
-          block.type === "toolResult" ? (
-            <ToolResultBlock key={index} text={block.text} />
-          ) : block.type === "toolCall" ? (
-            <ToolCallCard
-              key={index}
-              name={block.name}
-              input={block.input}
-              result={block.result}
-              isError={block.isError}
-              durationMs={block.durationMs}
-            />
-          ) : null,
-        )}
-      </div>
-    );
+    // 没有 user / assistant 身份的条目（工具结果之类）：照样走过程轨道，
+    // 不再有第二套「工具结果」样式。
+    return <ProcessRail steps={stepsFromEntries([entry])} />;
   }
 
   return (
     <div className="group text-foreground">
       <div className="min-w-0 space-y-1">
-        {entry.blocks.map((block, index) => {
-          switch (block.type) {
-            case "thinking":
-              return <ThinkingBlock key={index} text={block.text} durationMs={thinkingDurationMs} />;
-            case "text":
-              return <Markdown key={index} text={block.text} />;
-            case "toolCall":
-              return (
-                <ToolCallCard
-                  key={index}
-                  name={block.name}
-                  input={block.input}
-                  result={block.result}
-                  isError={block.isError}
-                  durationMs={block.durationMs}
-                />
-              );
-            case "toolResult":
-              return <ToolResultBlock key={index} text={block.text} />;
-            default:
-              return null;
-          }
-        })}
+        {/* 这里只留正文与图片：过程（思考 / 工具）统一由 TurnRow 的轨道渲染 */}
+        {entry.blocks.map((block, index) =>
+          block.type === "text" ? <Markdown key={index} text={block.text} /> : null,
+        )}
         <EntryActions entry={entry} onQuote={onQuote} align="start" durationMs={turnDurationMs} />
       </div>
     </div>

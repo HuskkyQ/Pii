@@ -7,25 +7,46 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#161a21" />
+    <meta name="theme-color" content="#0e121b" />
     <!--
       内联首屏骨架（关键：不要等 CSS/JS）。
-      以前是三段跳：白屏 → 黑屏 → 内容。把底色和骨架直接写进 HTML，
-      浏览器第一帧就是深色底 + 灰块，React 挂载后原地替换。
+      底色与光晕必须和 index.css 里的 body / body::before 一致，
+      否则 CSS 一加载，平的黑底会突然「长」出彩色光，闪一下。
+      React 挂载后 #boot-skeleton 被替换，光晕自动移交给 body::before。
     -->
     <style>
-      html { background: #161a21; color-scheme: dark; }
-      body { margin: 0; background: #161a21; }
+      html { background: #0e121b; color-scheme: dark; }
+      body { margin: 0; background: transparent; }
       #boot-skeleton {
         position: fixed; inset: 0; padding: 56px 16px 16px;
-        box-sizing: border-box; background: #161a21;
+        box-sizing: border-box; background:
+          radial-gradient(38% 46% at 14% 12%, oklch(0.62 0.2 300 / 24%), transparent 72%),
+          radial-gradient(34% 40% at 86% 18%, oklch(0.68 0.15 205 / 20%), transparent 74%),
+          radial-gradient(40% 42% at 78% 88%, oklch(0.6 0.19 335 / 16%), transparent 72%),
+          #0e121b;
         display: flex; flex-direction: column; gap: 18px;
         font: 13px/1.5 -apple-system, system-ui, "PingFang SC", sans-serif;
+      }
+      @media (max-width: 767px) {
+        /* 和 index.css 的 H5 分支一致：两团光，别在 React 挂载时突然少两团 */
+        #boot-skeleton {
+          background:
+            radial-gradient(70% 38% at 12% 6%, oklch(0.62 0.18 300 / 18%), transparent 72%),
+            radial-gradient(65% 34% at 88% 94%, oklch(0.66 0.14 210 / 14%), transparent 74%),
+            #0e121b;
+        }
       }
       @media (prefers-reduced-motion: no-preference) {
         #boot-skeleton div { animation: boot-pulse 1.4s ease-in-out infinite; }
       }
-      #boot-skeleton div { border-radius: 8px; background: #242a33; }
+      #boot-skeleton div {
+        border-radius: 8px;
+        background: oklch(1 0 0 / 6%);
+        border: 1px solid oklch(1 0 0 / 10%);
+        box-shadow: inset 0 1px 0 oklch(1 0 0 / 12%), 0 8px 32px oklch(0 0 0 / 25%);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%);
+      }
       #boot-skeleton .right { align-self: flex-end; height: 38px; width: 42%; border-radius: 16px 16px 4px 16px; }
       #boot-skeleton .line { height: 12px; }
       #boot-skeleton .w95 { width: 95%; } #boot-skeleton .w80 { width: 80%; }

@@ -138,7 +138,7 @@ export function Composer({
   const dangerPreset = permissionPreset === "all";
 
   return (
-    <div className="border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+    <div className="edge-fade-up pb-[env(safe-area-inset-bottom)]">
       <div className="mx-auto w-full max-w-[860px] px-3 py-2.5 sm:px-4">
         {images.length > 0 && (
           <div className="allow-x-pan mb-2 flex gap-2 overflow-x-auto pb-0.5">
@@ -153,7 +153,7 @@ export function Composer({
                   type="button"
                   onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
                   aria-label="移除这张图"
-                  className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border bg-background text-foreground shadow-sm"
+                  className="glass-strong absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border text-foreground"
                 >
                   <X className="size-3" />
                 </button>
@@ -168,7 +168,7 @@ export function Composer({
         )}
 
         {quote && (
-          <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2 py-1.5">
+          <div className="mb-2 flex items-start gap-2 rounded-lg border-l-2 border-primary/60 bg-foreground/[4%] px-2 py-1.5">
             <div className="min-w-0 flex-1">
               <div className="text-[10.5px] text-muted-foreground">引用</div>
               <p className="line-clamp-2 whitespace-pre-wrap text-[12px] text-foreground/80">{quote}</p>
@@ -200,7 +200,7 @@ export function Composer({
         {/* 输入区：一个可见的框（border + 稍亮的底），聚焦时描边高亮 */}
         <div
           className={cn(
-            "flex items-end gap-1.5 rounded-2xl border border-border bg-card/60 px-1.5 py-1.5",
+            "glass-island flex items-end gap-1.5 rounded-2xl border px-1.5 py-1.5",
             "transition-colors focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/15",
           )}
         >

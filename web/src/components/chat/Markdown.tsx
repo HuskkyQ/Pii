@@ -8,9 +8,16 @@ import { CodeBlock } from "./CodeBlock";
  * Markdown 渲染。
  * 安全取向：不执行原始 HTML、不加载远程图片（和 sakura-pi 的取舍一致）。
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  /** 过程性正文用：比答案小一号，字号由调用方决定层级 */
+  compact = false,
+}: {
+  text: string;
+  compact?: boolean;
+}) {
   return (
-    <div className="prose-pii text-[13.5px] leading-relaxed">
+    <div className={compact ? "prose-pii text-[12.5px] leading-relaxed" : "prose-pii text-[13.5px] leading-relaxed"}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml

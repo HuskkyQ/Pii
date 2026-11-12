@@ -1,15 +1,20 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
+import { stepsFromEntries, stepsFromLive } from "@/lib/process-steps";
 import type { Entry, LiveView, Snapshot } from "@/lib/types";
-import { DIVIDER_GAP, formatDivider } from "@/lib/time";
+import { DIVIDER_GAP, blocksToQuote, formatDivider } from "@/lib/time";
 
 import { EntryRow } from "./EntryRow";
-import { LiveRow } from "./LiveRow";
+import { LiveRow, liveAnswerText } from "./LiveRow";
 import { LoadingOlder } from "./LoadingOlder";
+import { ProcessRail } from "./ProcessRail";
 import { RunErrorBanner } from "./RunErrorBanner";
 import { TranscriptSkeleton } from "./TranscriptSkeleton";
+import { TurnMarker, TurnRailLine } from "./TurnRail";
 import { TurnRow, groupTurns } from "./TurnRow";
+import type { Turn } from "./TurnRow";
 
 /** 当前处于哪种实时状态（与 LiveRow 的判定一致）。 */
 function liveKind(live: LiveView | null): "thinking" | "working" | "text" | null {
@@ -23,6 +28,44 @@ function liveKind(live: LiveView | null): "thinking" | "working" | "text" | null
 
 /** 离顶部多近就开始抓下一页（px） */
 const LOAD_AHEAD = 320;
+
+/** 运行中的过程轨道：已落库的步骤 + 还没落库的（排队/运行中的工具、流式思考）。 */
+function LiveProcess({
+  live,
+  turn,
+  seconds,
+  streamingAnswer,
+  onQuote,
+}: {
+  live: LiveView;
+  turn: Turn;
+  seconds: number;
+  streamingAnswer: boolean;
+  onQuote?: (text: string) => void;
+}) {
+  /*
+   * 运行中 groupTurns 已经把“带正文的 assistant”挑成 turn.final 了，
+   * 所以这一轮的过程要把它一起算进去，否则那段过程性正文会在
+   * 「生成结束、工具开始」到「整轮结束」之间凭空消失又冒出来。
+   * 它真已经是最终答案（没带工具调用）时就不进轨道，单独按答案渲染。
+   */
+  const answered = turn.final && !turn.final.blocks.some((block) => block.type === "toolCall");
+  const processEntries = answered
+    ? turn.process
+    : [...turn.process, ...(turn.final ? [turn.final] : [])];
+
+  const steps = [...stepsFromEntries(processEntries), ...stepsFromLive(live)];
+  const status = streamingAnswer ? null : live.phase === "tools" ? "working" : "thinking";
+
+  return (
+    <>
+      {steps.length > 0 && (
+        <ProcessRail steps={steps} live status={status} elapsedSeconds={seconds} />
+      )}
+      {answered && turn.final && <EntryRow entry={turn.final} onQuote={onQuote} />}
+    </>
+  );
+}
 
 /**
  * 消息区。
@@ -94,6 +137,11 @@ export function Transcript({
   const busy = live?.phase !== undefined;
   const loading = snapshot === null;
 
+  // 运行中的「思考中/执行中 + 秒数」：从进入某个阶段开始算，换阶段归零。
+  const liveSeconds = useElapsedSeconds(busy, liveKind(live) ?? "idle");
+  // 正在流式输出答案时，过程头部的状态行让位给正文（以前是靠 LiveRow 里的判定）
+  const answerStreaming = live ? liveAnswerText(live) !== null : false;
+
   // 实时测量「思考用时」：从进入 thinking 到离开 thinking 的累计毫秒。
   const timing = useRef<{ kind: "thinking" | "working" | "text" | null; start: number }>({ kind: null, start: 0 });
   const thinkingAccum = useRef(0);
@@ -129,6 +177,51 @@ export function Transcript({
   const entriesKey = entries.length === 0 ? "0" : `${entries.length}:${entries[0]!.id}:${entries[entries.length - 1]!.id}`;
   const turns = useMemo(() => groupTurns(entries), [entriesKey]);
 
+  /*
+   * 过程轨道的展开状态按「轮」记住，放在这里而不是组件里：
+   * 运行中那条轨道是强制展开的，结束后如果状态只活在 ProcessRail 内部，
+   * 组件一换分支就重置成收起 —— 正看着的人会觉得内容「啪」一下被收走了。
+   */
+  const [railOpen, setRailOpen] = useState<Record<number, boolean>>({});
+  const lastTurnKey = turns.length > 0 ? turns[turns.length - 1]!.key : undefined;
+  useEffect(() => {
+    if (!busy || lastTurnKey === undefined) return;
+    setRailOpen((map) => (map[lastTurnKey] ? map : { ...map, [lastTurnKey]: true }));
+  }, [busy, lastTurnKey]);
+
+  /*
+   * 左侧时间轴：每一轮一个点。
+   * 「当前轮」不靠 scrollTop 算像素，而是问每一轮「你的顶边过我这条线了吗」——
+   * 这样气泡、折叠轨高矮不一致也不会错位。
+   */
+  const turnRefs = useRef(new Map<number, HTMLDivElement>());
+  const [activeKey, setActiveKey] = useState<number | null>(null);
+
+  const markActive = useCallback(() => {
+    const view = viewport.current;
+    if (!view) return;
+    const edge = view.getBoundingClientRect().top + 96;
+    let current: number | null = null;
+    for (const turn of turns) {
+      const el = turnRefs.current.get(turn.key);
+      if (el && el.getBoundingClientRect().top <= edge) current = turn.key;
+    }
+    setActiveKey((prev) => (prev === current ? prev : current));
+  }, [turns]);
+
+  // 挂载、翻页、新快照（视口高度变了）都重新算一次
+  useEffect(() => {
+    markActive();
+  }, [markActive]);
+
+  function jumpTo(key: number) {
+    const view = viewport.current;
+    const el = turnRefs.current.get(key);
+    if (!view || !el) return;
+    const top = view.scrollTop + el.getBoundingClientRect().top - view.getBoundingClientRect().top - 12;
+    view.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }
+
   return (
     <ScrollArea
       className="h-full"
@@ -140,6 +233,7 @@ export function Transcript({
 
         const nearTop = target.scrollTop < LOAD_AHEAD;
         setAtTop(nearTop);
+        markActive();
         if (nearTop && hasMore && !loadingOlder && onLoadOlder) {
           // 记下插入前的滚动高度；新内容进来后按差值补 scrollTop
           adjust.current = target.scrollHeight;
@@ -147,61 +241,102 @@ export function Transcript({
         }
       }}
     >
-      <div ref={container} className="mx-auto w-full max-w-[860px] space-y-4 px-4 py-5">
-        {loading && <TranscriptSkeleton />}
+      <div ref={container} className="mx-auto w-full max-w-[860px] px-4 py-5">
+        {/* md:pl-7 = 给左侧时间轴留的 28px 走廊；手机上这条路不画 */}
+        <div className="relative md:pl-7">
+          {turns.length > 1 && <TurnRailLine />}
+          <div className="space-y-4">
+            {loading && <TranscriptSkeleton />}
 
-        {!loading && <LoadingOlder visible={loadingOlder} />}
+            {!loading && <LoadingOlder visible={loadingOlder} />}
 
-        {!loading && !loadingOlder && hasMore && atTop && (
-          <div className="flex justify-center py-1 text-[11px] text-muted-foreground/50">继续上滑加载更早</div>
-        )}
+            {!loading && !loadingOlder && hasMore && atTop && (
+              <div className="flex justify-center py-1 text-[11px] text-muted-foreground/50">继续上滑加载更早</div>
+            )}
 
-        {!loading && entries.length === 0 && !busy && (
-          <p className="pt-16 text-center text-[13px] text-muted-foreground">
-            还没有消息。试着问一句，或者让它跑个命令。
-          </p>
-        )}
+            {!loading && entries.length === 0 && !busy && (
+              <p className="pt-16 text-center text-[13px] text-muted-foreground">
+                还没有消息。试着问一句，或者让它跑个命令。
+              </p>
+            )}
 
-        {turns.map((turn, index) => {
-          const isLast = index === turns.length - 1;
-          const previous = index > 0 ? turns[index - 1] : undefined;
-          const lastOfPrevious = previous?.entries[previous.entries.length - 1];
-          const previousAt = previous?.final?.at ?? lastOfPrevious?.at;
-          const showDivider =
-            turn.startAt !== undefined &&
-            (previousAt === undefined || turn.startAt - previousAt > DIVIDER_GAP);
+            {turns.map((turn, index) => {
+              const isLast = index === turns.length - 1;
+              const previous = index > 0 ? turns[index - 1] : undefined;
+              const lastOfPrevious = previous?.entries[previous.entries.length - 1];
+              const previousAt = previous?.final?.at ?? lastOfPrevious?.at;
+              const showDivider =
+                turn.startAt !== undefined &&
+                (previousAt === undefined || turn.startAt - previousAt > DIVIDER_GAP);
 
-          return (
-            <div key={turn.key} className="space-y-4">
-              {showDivider && (
-                <div className="flex justify-center">
-                  <span className="rounded-full bg-muted/60 px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-                    {formatDivider(turn.startAt as number)}
-                  </span>
+              return (
+                <div
+                  key={turn.key}
+                  ref={(el) => {
+                    if (el) turnRefs.current.set(turn.key, el);
+                    else turnRefs.current.delete(turn.key);
+                  }}
+                  className="relative space-y-4"
+                >
+                  {showDivider && (
+                    <div className="flex justify-center">
+                      <span className="rounded-full bg-muted/60 px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+                        {formatDivider(turn.startAt as number)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 时间轴的点跟着「你的这条消息」走：装在它外面，别被时间分隔线顶歪 */}
+                  <div className="relative">
+                    {turn.user && (
+                      <TurnMarker
+                        label={blocksToQuote(turn.user.blocks, 60)}
+                        active={activeKey === turn.key}
+                        onJump={() => jumpTo(turn.key)}
+                      />
+                    )}
+
+                    {isLast && busy ? (
+                    // 进行中：过程**照样显示**，只是换成实时轨道（思考中/执行中 + 逐条落下的步骤）；
+                    // 最终正文的流式展示交给 LiveRow。以前这里把过程整个藏起来，
+                    // 结果最想知道进度的时刻反而什么都看不到。
+                    <>
+                      {turn.user ? <EntryRow entry={turn.user} onQuote={onQuote} /> : null}
+                      {live && (
+                        <LiveProcess
+                          live={live}
+                          turn={turn}
+                          seconds={liveSeconds}
+                          streamingAnswer={answerStreaming}
+                          onQuote={onQuote}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <TurnRow
+                      turn={turn}
+                      onQuote={onQuote}
+                      thinkingDurationMs={
+                        turn.final
+                          ? (turnThinking.get(turn.final.id) ?? turn.final.thinkingMs)
+                          : undefined
+                      }
+                      railOpen={railOpen[turn.key]}
+                      onRailOpenChange={(open) =>
+                        setRailOpen((map) => ({ ...map, [turn.key]: open }))
+                      }
+                    />
+                  )}
+                  </div>
                 </div>
-              )}
+              );
+            })}
 
-              {isLast && busy ? (
-                // 进行中：过程（思考 / 工具 / 中间正文）一律收起，只留用户这条消息。
-                // 此刻到底在干嘛（Thinking / Working）以及最终正文的流式展示，
-                // 统一交给下方 <LiveRow> 呈现；结束后 busy=false 自动切到 TurnRow 的折叠态。
-                turn.user ? <EntryRow entry={turn.user} onQuote={onQuote} /> : null
-              ) : (
-                <TurnRow
-                  turn={turn}
-                  onQuote={onQuote}
-                  thinkingDurationMs={
-                    turn.final ? (turnThinking.get(turn.final.id) ?? turn.final.thinkingMs) : undefined
-                  }
-                />
-              )}
-            </div>
-          );
-        })}
-
-        {live && <LiveRow live={live} />}
-        {!live && <RunErrorBanner error={runError ?? null} onRetry={onRetry} />}
-        <div ref={bottom} />
+            {live && <LiveRow live={live} />}
+            {!live && <RunErrorBanner error={runError ?? null} onRetry={onRetry} />}
+            <div ref={bottom} />
+          </div>
+        </div>
       </div>
     </ScrollArea>
   );

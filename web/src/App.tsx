@@ -14,6 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { deleteConversation, getLastConversation, prompt, renameConversation, setLastConversation } from "@/lib/api";
 import { useConversations } from "@/hooks/useConversations";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePii } from "@/hooks/usePii";
 import { usePolicy } from "@/hooks/usePolicy";
 import { toast } from "sonner";
@@ -65,6 +66,17 @@ function readInitialConversation(): number | undefined {
   return readConversationFromUrl() ?? readStoredConversation();
 }
 
+/** PC 侧栏收起状态：刷新 / 下次打开还保持，和「记住最后会话」一个套路。 */
+const SIDEBAR_COLLAPSED_KEY = "pii:sidebar-collapsed";
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** 落在头部下方：安全区 + 头部高度(≈48) + 一点缝。 */
 const TOAST_OFFSET = { top: "calc(env(safe-area-inset-top) + 56px)" };
 
@@ -74,10 +86,33 @@ type OpenPicker = { kind: PickerKind; anchor: HTMLElement } | null;
 export default function App() {
   const [activeId, setActiveId] = useState<number | undefined>(readInitialConversation);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** PC 左侧会话栏是否收起；手机只有抽屉，这个值在手机端不参与渲染 */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const isDesktop = useMediaQuery("(min-width: 768px)");
   const [picker, setPicker] = useState<OpenPicker>(null);
   /** 刚新建的会话 id：目录选择器要作用于它（而不是还未来得及切过去的 currentId） */
   const [cwdTarget, setCwdTarget] = useState<number | undefined>(undefined);
   const closePicker = useCallback(() => setPicker(null), []);
+
+  /*
+   * 头部左上那一个按钮，两端做两件事：
+   *   PC  → 收起 / 展开左侧会话栏
+   *   H5  → 拉出会话抽屉（手机没有常驻侧栏）
+   * 位置不变，用户不用重新找按钮。
+   */
+  const handleMenuClick = useCallback(() => {
+    if (isDesktop) setSidebarCollapsed((value) => !value);
+    else setMenuOpen(true);
+  }, [isDesktop]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
+    } catch {
+      /* 隐私模式 / 无存储权限时忽略，只是下次不记得而已 */
+    }
+  }, [sidebarCollapsed]);
+
   const [quote, setQuote] = useState<string | null>(null);
 
   const { items, refresh, create, creating } = useConversations();
@@ -199,10 +234,11 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="flex h-dvh bg-background text-foreground">
+      <div className="relative z-10 flex h-dvh text-foreground">
         <ConversationsPanel
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
+          collapsed={sidebarCollapsed}
           items={items}
           activeId={currentId}
           onSelect={select}
@@ -222,7 +258,8 @@ export default function App() {
             connection={connection}
             snapshot={snapshot}
             title={title}
-            onOpenMenu={() => setMenuOpen(true)}
+            onMenuClick={handleMenuClick}
+            sidebarCollapsed={sidebarCollapsed}
             onRename={currentId === undefined ? undefined : rename}
             conversationId={currentId}
           />

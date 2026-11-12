@@ -3,8 +3,25 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * 液态玻璃（Liquid Glass）
+ *
+ * 打个比方：以前页面是一块「刷了深灰漆的木板」，所有卡片都贴在木板上。
+ * 现在改成「一池带彩色光的水，上面浮着几块磨砂玻璃」：
+ *   - 水 = body::before 的几团柔和光晕（在**最底层**，不随消息滚动）
+ *   - 磨砂玻璃 = .glass / .glass-strong（只有头栏、输入框、侧栏、浮层这几块）
+ *   - 消息正文直接浮在水面上，不套玻璃，否则满屏 backdrop-filter 会把手机卡死
+ *
+ * 所以光晕是 fixed 的：你滚消息时，光不动、玻璃在动 —— 这就是「透过去」的感觉。
+ */
 :root {
   --radius: 0.625rem;
+  /* 玻璃材质：浅色主题用偏白的镜面 */
+  --glass-tint: oklch(1 0 0 / 55%);
+  --glass-strong-tint: oklch(1 0 0 / 82%);
+  --glass-border: oklch(1 0 0 / 70%);
+  --glass-highlight: oklch(1 0 0 / 90%);
+  --glass-shadow: oklch(0.2 0.02 265 / 12%);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -34,8 +51,16 @@
 }
 
 .dark {
-  --background: oklch(0.16 0.006 265);
+  /* 基底：深蓝灰。写 hex 不写 oklch —— oklch 的 L=0.145 实测是 #070a11，
+     比肉眼判断暗得多，容易把光晕衬得像贴片 */
+  --background: #0e121b;
   --foreground: oklch(0.93 0.004 265);
+  /* 深色主题下玻璃是「一层薄薄的白雾」，不是黑玻璃 */
+  --glass-tint: oklch(1 0 0 / 6%);
+  --glass-strong-tint: oklch(0.16 0.014 265 / 82%);
+  --glass-border: oklch(1 0 0 / 12%);
+  --glass-highlight: oklch(1 0 0 / 16%);
+  --glass-shadow: oklch(0 0 0 / 32%);
   --card: oklch(0.2 0.007 265);
   --card-foreground: oklch(0.93 0.004 265);
   --popover: oklch(0.2 0.007 265);
@@ -99,6 +124,208 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* 玻璃基类：半透明填充 + 背后折射 + 上缘一道镜面高光 */
+  .glass,
+  .glass-strong {
+    border-color: var(--glass-border);
+    -webkit-backdrop-filter: blur(22px) saturate(165%);
+    backdrop-filter: blur(22px) saturate(165%);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      inset 0 -1px 0 oklch(0 0 0 / 8%),
+      0 8px 32px var(--glass-shadow);
+  }
+  .glass {
+    background: var(--glass-tint);
+  }
+  /* 浮层 / 抽屉：底下有正文，得多盖一点，不然字叠字看不清 */
+  .glass-strong {
+    background: var(--glass-strong-tint);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+  }
+
+  /*
+   * 「融进背景」的上下两条收口。
+   *
+   * 头栏和输入栏以前也是一块 .glass —— 有 border 缝、有外阴影，
+   * 像在地板上又铺了一块玻璃砖，和中间那池光晕硬生生切开。
+   * 现在它们**不再是板**：不加 backdrop-filter、不加阴影、不加边线，
+   * 只铺一层从透明到极淡白的渐变。光晕一路连续铺到屏幕边，
+   * 唯一有实体感的东西只剩输入框那个「浮岛」。
+   */
+  .edge-fade-down,
+  .edge-fade-up,
+  .edge-fade-right {
+    background-color: transparent;
+  }
+  .edge-fade-down {
+    background-image: linear-gradient(
+      to bottom,
+      oklch(1 0 0 / 5%) 0%,
+      oklch(1 0 0 / 2.5%) 55%,
+      transparent 100%
+    );
+  }
+  .edge-fade-up {
+    background-image: linear-gradient(
+      to top,
+      oklch(1 0 0 / 5%) 0%,
+      oklch(1 0 0 / 2.5%) 55%,
+      transparent 100%
+    );
+  }
+  /* 桌面侧栏同理：上下都融了，只剩它一条竖硬边就特别扎眼 */
+  .edge-fade-right {
+    background-image: linear-gradient(
+      to right,
+      oklch(1 0 0 / 5%) 0%,
+      oklch(1 0 0 / 2%) 70%,
+      transparent 100%
+    );
+  }
+  /* 给「浮岛」用的：有边界、有折射，但不带割裂感的大外阴影 */
+  .glass-island {
+    background: oklch(1 0 0 / 5%);
+    border-color: var(--glass-border);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 6px 24px oklch(0 0 0 / 18%);
+  }
+
+  /* 老浏览器没有 backdrop-filter：退回半透明实色，别让内容彻底透出来 */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass { background: #171b25; }
+    .glass-strong { background: #12161f; }
+  }
+
+  /*
+   * 三个选择器（目录 / 模型 / 权限）共用的进出场动画。
+   *
+   * 这里**故意用 animation 而不是 transition**：
+   *   transition 要「先画一帧起始态、再切目标态」才肯动，以前靠 JS 连等两个
+   *   requestAnimationFrame 来掐这个时机。首次打开时页面最忙（内容第一次挂载、
+   *   SSE 快照、字体），主线程一卡，两次 rAF 挤到同一帧里，浏览器只看到最终态，
+   *   动画就直接被吞了 —— 这正是「首次点击直接显示、后续正常」的根因。
+   *   animation 是元素**插入 DOM 的那一刻由浏览器自己开播**，不依赖 JS 掐点。
+   *
+   * 打个比方：transition 是「先摆好关门姿势，等人喊一声才开」；
+   * animation 是「给门装了弹簧，装上去自己就弹开」。
+   */
+  @keyframes pii-sheet-in {
+    from { translate: 0 100%; }
+    to { translate: 0 0; }
+  }
+  @keyframes pii-sheet-out {
+    from { translate: 0 0; }
+    to { translate: 0 100%; }
+  }
+  @keyframes pii-pop-in {
+    from { opacity: 0; scale: 0.97; }
+    to { opacity: 1; scale: 1; }
+  }
+  @keyframes pii-pop-out {
+    from { opacity: 1; scale: 1; }
+    to { opacity: 0; scale: 0.97; }
+  }
+  @keyframes pii-mask-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pii-mask-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  .picker-sheet,
+  .picker-pop,
+  .picker-mask {
+    /* --picker-dur 由外壳按形态给：手机 260ms、桌面 160ms */
+    animation-duration: var(--picker-dur, 260ms);
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .picker-sheet { animation-name: pii-sheet-in; }
+  .picker-pop { animation-name: pii-pop-in; }
+  .picker-mask { animation-name: pii-mask-in; animation-timing-function: ease-out; }
+
+  /* 关闭：切一下最外层的 data 属性，三个元素同时换成 out 动画，谁也不先走 */
+  [data-picker-closing="true"] .picker-sheet {
+    animation-name: pii-sheet-out;
+    animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  }
+  [data-picker-closing="true"] .picker-pop {
+    animation-name: pii-pop-out;
+    animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  }
+  [data-picker-closing="true"] .picker-mask { animation-name: pii-mask-out; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .picker-sheet,
+    .picker-pop,
+    .picker-mask {
+      animation: none;
+    }
+  }
+
+
+  /* sonner 的 toast 也用同一块玻璃，别让它成为页面里唯一一块「实心塑料」 */
+  [data-sonner-toast] {
+    background: var(--glass-strong-tint) !important;
+    border-color: var(--glass-border) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 8px 32px var(--glass-shadow) !important;
+  }
+
+  /*
+   * 底层光晕。用 radial-gradient 而不是 filter: blur() —— 渐变本身就是软的，
+   * 少一次全屏高斯模糊，手机上省一大截 GPU。
+   */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(38% 46% at 14% 12%, oklch(0.62 0.2 300 / 24%), transparent 72%),
+      radial-gradient(34% 40% at 86% 18%, oklch(0.68 0.15 205 / 20%), transparent 74%),
+      radial-gradient(40% 42% at 78% 88%, oklch(0.6 0.19 335 / 16%), transparent 72%),
+      radial-gradient(36% 38% at 20% 86%, oklch(0.64 0.14 250 / 14%), transparent 70%);
+    animation: liquid-drift 34s ease-in-out infinite alternate;
+  }
+
+  @keyframes liquid-drift {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(1.5%, -1%, 0) scale(1.04); }
+    100% { transform: translate3d(-1.5%, 1.5%, 0) scale(1.02); }
+  }
+
+  /* H5：两团光就够，关掉动画、降 blur 半径 —— iOS Safari 上满屏折射会掉帧 */
+  @media (max-width: 767px) {
+    body::before {
+      background:
+        radial-gradient(70% 38% at 12% 6%, oklch(0.62 0.18 300 / 18%), transparent 72%),
+        radial-gradient(65% 34% at 88% 94%, oklch(0.66 0.14 210 / 14%), transparent 74%);
+      animation: none;
+    }
+    .glass,
+    .glass-strong {
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      backdrop-filter: blur(14px) saturate(140%);
+    }
+  }
+
+  /* 系统开了「减少动态效果」就别漂了 */
+  @media (prefers-reduced-motion: reduce) {
+    body::before { animation: none; }
+  }
   /*
    * iOS standalone 的两个老毛病，都在这一层治：
    *  1. 整页能被上下拽动（橡皮筋）—— 明明只有消息列表该滚
@@ -116,7 +343,9 @@
     overscroll-behavior: none;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    /* 底色留在这里，光晕层（::before）画在它之上 */
+    background: var(--background);
     position: fixed;
     inset: 0;
     overflow: hidden;

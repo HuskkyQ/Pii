@@ -19,7 +19,13 @@ interface ListProps {
 interface PanelProps extends ListProps {
   open: boolean;
   onClose: () => void;
+  /** PC 侧栏收起；手机抽屉不受影响 */
+  collapsed?: boolean;
 }
+
+/** 侧栏宽度 / 收起时长，和手机抽屉的 260ms 保持一致 */
+const SIDEBAR_WIDTH = 240;
+const SIDEBAR_ANIM_MS = 260;
 
 /** 会话列表本体：桌面侧栏和手机抽屉共用同一份。 */
 function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd, creating, onDelete }: ListProps) {
@@ -172,7 +178,7 @@ const DRAWER_ANIM_MS = 260;
  * 不做路由：一个 `?c=<id>` 就够表达「我在看哪个会话」，
  * 刷新页面也不会丢，还省掉一个 router 依赖。
  */
-export function ConversationsPanel({ open, onClose, ...list }: PanelProps) {
+export function ConversationsPanel({ open, onClose, collapsed = false, ...list }: PanelProps) {
   // 进出场动画：open 变 true 先挂载、下一帧再切到「展开」触发过渡；
   // 变 false 先切回「收起」，等动画播完再卸载，避免生硬地一闪就没。
   const [mounted, setMounted] = useState(open);
@@ -199,8 +205,23 @@ export function ConversationsPanel({ open, onClose, ...list }: PanelProps) {
 
   return (
     <>
-      <aside className="hidden w-60 shrink-0 border-r md:block">
-        <ConversationList {...list} />
+      {/*
+       * PC 侧栏收起：外层宽度 240 → 0 + 淡出，内层固定 240 不压缩文字。
+       * 为什么不用 translateX：侧栏占了 flex 的一格，只把它移走，右边主区不会补上来；
+       * 收起的目的正是「把这块宽度还给对话」。
+       */}
+      <aside
+        aria-hidden={collapsed ? true : undefined}
+        style={{ transitionDuration: `${SIDEBAR_ANIM_MS}ms` }}
+        className={cn(
+          "edge-fade-right hidden shrink-0 overflow-hidden md:block",
+          "transition-[width,opacity] ease-out motion-reduce:transition-none",
+          collapsed ? "w-0 opacity-0" : "w-60 opacity-100",
+        )}
+      >
+        <div className="h-full" style={{ width: SIDEBAR_WIDTH }}>
+          <ConversationList {...list} />
+        </div>
       </aside>
 
       {mounted && (
@@ -216,7 +237,7 @@ export function ConversationsPanel({ open, onClose, ...list }: PanelProps) {
           />
           <div
             className={cn(
-              "absolute inset-y-0 left-0 flex w-[78%] max-w-[300px] flex-col border-r bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-xl transition-transform ease-out will-change-transform motion-reduce:transition-none",
+              "glass-strong absolute inset-y-0 left-0 flex w-[78%] max-w-[300px] flex-col border-r pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] transition-transform ease-out will-change-transform motion-reduce:transition-none",
               shown ? "translate-x-0" : "-translate-x-full",
             )}
             style={{ transitionDuration: `${DRAWER_ANIM_MS}ms` }}

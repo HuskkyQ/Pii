@@ -64,7 +64,6 @@ export function CwdPicker({ open, anchor, conversationId, onClose, onPicked }: C
       anchor={anchor}
       align="start"
       label="选择工作目录"
-      mobileMaxHeight="78dvh"
       onClose={onClose}
     >
       {() => (

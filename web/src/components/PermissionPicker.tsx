@@ -62,7 +62,6 @@ export function PermissionPicker({ open, anchor, policy, preset, onApply, onClos
       anchor={anchor}
       align="start"
       label="工具执行权限"
-      mobileMaxHeight="82dvh"
       onClose={onClose}
     >
       {({ isDesktop }) => (

@@ -1,8 +1,9 @@
-import { Menu, Pencil } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeftOpen, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import type { ConnectionState, Snapshot } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -34,16 +35,38 @@ interface StatusBarProps {
   snapshot: Snapshot | null;
   /** 当前会话标题（没有就显示 pii） */
   title: string;
-  onOpenMenu: () => void;
+  /** 左上角那一个按钮：PC 收起侧栏，手机拉出抽屉（由 App 按断点分流） */
+  onMenuClick: () => void;
+  /** PC 侧栏当前是否收起，用来切图标和无障碍名称 */
+  sidebarCollapsed?: boolean;
   /** 点了标题改名时调用；不传就不开启改名 */
   onRename?: (title: string) => Promise<void>;
   /** 通知开关要记住当前会话，订阅时带上 */
   conversationId?: number;
 }
 
-export function StatusBar({ connection, snapshot, title, onOpenMenu, onRename, conversationId }: StatusBarProps) {
+export function StatusBar({
+  connection,
+  snapshot,
+  title,
+  onMenuClick,
+  sidebarCollapsed = false,
+  onRename,
+  conversationId,
+}: StatusBarProps) {
   const model = snapshot?.agent?.model;
   const usage = formatUsage(snapshot);
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const MenuIcon = isDesktop
+    ? sidebarCollapsed
+      ? PanelLeftOpen
+      : PanelLeftClose
+    : Menu;
+  const menuLabel = isDesktop
+    ? sidebarCollapsed
+      ? "展开会话侧栏"
+      : "收起会话侧栏"
+    : "会话列表";
 
   // 行内改名：点标题 → 变成输入框 → 回车/失焦保存、Esc 取消。
   const [editing, setEditing] = useState(false);
@@ -93,16 +116,18 @@ export function StatusBar({ connection, snapshot, title, onOpenMenu, onRename, c
   };
 
   return (
-    <header className="flex shrink-0 items-center gap-2 overflow-hidden border-b px-2 py-2 sm:px-3 sm:py-2.5">
-      {/* 手机上唯一的入口：会话抽屉 */}
+    <header className="edge-fade-down flex shrink-0 items-center gap-2 overflow-hidden px-2 py-2 sm:px-3 sm:py-2.5">
+      {/* 一个入口两端复用：PC 收起/展开侧栏，手机拉出抽屉。位置永远不变。 */}
       <Button
         size="icon"
         variant="ghost"
-        className="size-8 shrink-0 md:hidden"
-        onClick={onOpenMenu}
-        aria-label="会话列表"
+        className="size-8 shrink-0"
+        onClick={onMenuClick}
+        aria-label={menuLabel}
+        title={menuLabel}
+        aria-expanded={isDesktop ? !sidebarCollapsed : undefined}
       >
-        <Menu className="size-4" />
+        <MenuIcon className="size-4" />
       </Button>
 
       <span

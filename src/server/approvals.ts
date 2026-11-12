@@ -11,24 +11,13 @@
  */
 import { randomUUID } from "node:crypto";
 
-export interface ApprovalRequest {
-  id: string;
-  /** 这个审批属于哪个会话。前端只显示当前会话的审批，避免串台。 */
-  conversationId: number;
-  /** 模型给的 tool call id */
-  callId: string;
-  tool: string;
-  input: unknown;
-  createdAt: number;
-  /** 超时时刻（毫秒时间戳），前端可用来倒计时 */
-  expiresAt: number;
-}
+/* 审批的「出口类型」在 ports.ts（agent 层），实现留在本文件；request() 是对接点。 */
+import type { ApprovalOutcome, ApprovalPort } from "../ports.ts";
+export type { ApprovalOutcome };
 
-export type ApprovalOutcome = {
-  id: string;
-  allow: boolean;
-  reason: "user" | "timeout" | "shutdown";
-};
+/* 形状住在 shared/types.ts（前端渲染审批卡也用同一份）。 */
+import type { ApprovalRequest } from "../../shared/types.ts";
+export type { ApprovalRequest };
 
 interface Pending {
   request: ApprovalRequest;
@@ -47,7 +36,7 @@ export interface ApprovalBrokerOptions {
   shouldAutoAllow?: (conversationId: number, tool: string) => boolean;
 }
 
-export class ApprovalBroker {
+export class ApprovalBroker implements ApprovalPort {
   #pending = new Map<string, Pending>();
   #requestListeners = new Set<(request: ApprovalRequest) => void>();
   #outcomeListeners = new Set<(outcome: ApprovalOutcome) => void>();

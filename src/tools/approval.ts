@@ -6,9 +6,9 @@
  */
 import { ToolTask, defineExtension, hook } from "@earendil-works/pi-durable";
 
-import type { ApprovalBroker } from "../server/approvals.ts";
+import type { ApprovalPort } from "../ports.ts";
 
-export function approvalExtension(broker: ApprovalBroker) {
+export function approvalExtension(broker: ApprovalPort) {
   return defineExtension({
     name: "pii-approval",
     hooks: [

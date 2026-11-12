@@ -8,81 +8,13 @@
  */
 import type { ConversationView } from "@earendil-works/pi-durable";
 
-export type Block =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  /** 工具调用；`result` 是它配对的结果（由 projectEntries 按 call id 合并进来） */
-  | {
-      type: "toolCall";
-      id?: string;
-      name: string;
-      input: unknown;
-      result?: string;
-      isError?: boolean;
-      durationMs?: number;
-    }
-  | { type: "toolResult"; id?: string; name?: string; text: string; isError?: boolean; durationMs?: number }
-  /**
-   * 用户上传的图片。
-   *
-   * **不把 base64 塞进快照**：一张图 base64 后 200KB 起步，而快照是每次状态变化都整份推的。
-   * 改成 URL 后：快照变小、浏览器自带缓存（图片内容按 entry 不变 → immutable），
-   * 滚回去再看一眼也不会重新下载。
-   */
-  | { type: "image"; mimeType: string; url: string };
+import type { Block, Entry, LivePhase, LiveView, Snapshot } from "../../shared/types.ts";
 
-export interface Entry {
-  id: number;
-  kind: string;
-  blocks: Block[];
-  /**
-   * 时间戳（毫秒）。
-   * 注意：**entry 本身没有时间字段**，时间在消息里（`message.timestamp`）。
-   * 所以取该 entry 里第一条带 timestamp 的消息；纯展示类 entry 可能没有。
-   */
-  at?: number;
-  /** 生成这条消息的 task id（用来查生成耗时） */
-  byTaskId?: number;
-  /** 服务端补充的生成耗时（毫秒）——用作思考块用时的兵底（历史消息） */
-  thinkingMs?: number;
-}
-
-/** 正在进行的阶段。`generating` = 模型在生成（含思考/正文流式），`tools` = 在跑工具。 */
-export type LivePhase = "generating" | "tools";
-
-export interface LiveView {
-  phase?: LivePhase;
-  /** 正在流式生成的助手消息（半截）。每 ~100ms 追一次 */
-  message?: { blocks: Block[] };
-  /** 正在跑的工具（名字 + 状态），仅用于展示 */
-  tools?: { name: string; status: "pending" | "running" | "done" }[];
-  /** 思考字数（thinking 块的字符总数），给实时状态显示用 */
-  thinkingChars?: number;
-  /** 工具输出字数（正在跑的工具累积输出字符数） */
-  outputChars?: number;
-}
-
-export interface Snapshot {
-  conversationId: number;
-  entries: Entry[];
-  /** 窗口化：还有更早的条目（前端据此显示「加载更早」） */
-  hasMore?: boolean;
-  /** 窗口里最老的那条 id（往前翻页的游标） */
-  oldestEntryId?: number | null;
-  /**
-   * 最近一次失败的运行（模型不可达、key 失效、被限流…）。
-   * 失败时对话里不会写入任何东西，所以必须单独带出来，否则用户只看到「没回复」。
-   */
-  runError?: { taskId: number; message: string; reason?: string; at?: number } | null;
-  /** pi.live 的结构化投影：正在跑的生成（含流式半截）和工具调用 */
-  live: LiveView | null;
-  /** pi.usage：token / 花费累计 */
-  usage: unknown;
-  /** pi.agent：本会话选定的模型、思考等级等 */
-  agent: unknown;
-  /** pi.inbox：排队的输入 */
-  inbox: unknown;
-}
+/*
+ * 这些形状现在住在 shared/types.ts（前后端共用一份）。
+ * 这里 re-export 只是为了老调用点不用改 import 路径。
+ */
+export type { Block, Entry, LivePhase, LiveView, Snapshot };
 
 interface RawMessage {
   role?: string;
@@ -373,8 +305,13 @@ export function projectView(view: ConversationView, options: ProjectOptions = {}
     hasMore: dropped > 0,
     oldestEntryId,
     live: projectLive(view.docs["pi.live"]),
-    usage: view.docs["pi.usage"] ?? null,
-    agent: view.docs["pi.agent"] ?? null,
-    inbox: view.docs["pi.inbox"] ?? null,
+    /*
+     * 下面三个在 pi-durable 文档里是 `unknown`，但 UI 已经按收窄形状渲染
+     * （StatusBar / App 里的 usage、agent）。所以这里断言一次。
+     * 代价：pi-durable 哪天改了这几个 doc 的形状，编译期不会提醒，只能在界面上看出来。
+     */
+    usage: (view.docs["pi.usage"] ?? null) as Snapshot["usage"],
+    agent: (view.docs["pi.agent"] ?? null) as Snapshot["agent"],
+    inbox: (view.docs["pi.inbox"] ?? null) as Snapshot["inbox"],
   };
 }

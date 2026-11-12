@@ -14,46 +14,28 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const KNOWN_TOOLS = ["read", "write", "edit", "bash"] as const;
-export type KnownTool = (typeof KNOWN_TOOLS)[number];
+/*
+ * 形状和预设住在 shared/policies.ts（前端也要用同一份）。
+ * 这里 re-export 保持 `./policies.ts` 的旧 import 继续可用；
+ * 下面只留真正依赖 fs / 环境变量的部分。
+ */
+import { KNOWN_TOOLS, PRESETS, DEFAULT_PRESET, type KnownTool, type Policy } from "../../shared/policies.ts";
+export {
+  KNOWN_TOOLS,
+  PRESETS,
+  DEFAULT_PRESET,
+  presetOf,
+  type KnownTool,
+  type Policy,
+  type PresetId,
+  type ToolPolicy,
+} from "../../shared/policies.ts";
 
-export interface Policy {
-  /** 每个已知工具是否「自动放行」（false = 每次询问） */
-  auto: Record<KnownTool, boolean>;
-  /** 未知/新工具是否也自动（仅「全部放行」为 true） */
-  allowUnknown: boolean;
-}
-
-export type PresetId = "ask-all" | "read-only" | "write-allowed" | "all";
-
-/** 4 个预设档位。前端有一份等价的副本（web/src/lib/permissions.ts），改这里记得同步。 */
-export const PRESETS: Record<PresetId, Policy> = {
-  "ask-all": { auto: { read: false, write: false, edit: false, bash: false }, allowUnknown: false },
-  "read-only": { auto: { read: true, write: false, edit: false, bash: false }, allowUnknown: false },
-  "write-allowed": { auto: { read: true, write: true, edit: true, bash: false }, allowUnknown: false },
-  all: { auto: { read: true, write: true, edit: true, bash: true }, allowUnknown: true },
-};
-
-/** 没配过策略时的默认档：只读自动（read 免问，其余问）。与旧的 PII_AUTO_ALLOW=read 一致。 */
-export const DEFAULT_PRESET: PresetId = "read-only";
-
-const TITLES_FILE = "conversation-policies.json";
+/** 存策略的文件名。老名字叫 TITLES_FILE（复制来的），其实是 policy —— 顺手改名。 */
+const POLICIES_FILE = "conversation-policies.json";
 
 function clonePolicy(policy: Policy): Policy {
   return { auto: { ...policy.auto }, allowUnknown: policy.allowUnknown };
-}
-
-function samePolicy(a: Policy, b: Policy): boolean {
-  if (a.allowUnknown !== b.allowUnknown) return false;
-  return KNOWN_TOOLS.every((tool) => a.auto[tool] === b.auto[tool]);
-}
-
-/** 一个 policy 等价于哪个预设；都不等则 "custom"。 */
-export function presetOf(policy: Policy): PresetId | "custom" {
-  for (const id of Object.keys(PRESETS) as PresetId[]) {
-    if (samePolicy(policy, PRESETS[id])) return id;
-  }
-  return "custom";
 }
 
 /**
@@ -88,7 +70,7 @@ export function normalizePolicy(raw: unknown): Policy | undefined {
 }
 
 function readAll(dataDir: string): Record<string, Policy> {
-  const path = join(dataDir, TITLES_FILE);
+  const path = join(dataDir, POLICIES_FILE);
   if (!existsSync(path)) return {};
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
@@ -107,7 +89,7 @@ function readAll(dataDir: string): Record<string, Policy> {
 function writeAll(dataDir: string, map: Record<string, Policy>): void {
   const sorted: Record<string, Policy> = {};
   for (const key of Object.keys(map).sort((a, b) => Number(a) - Number(b))) sorted[key] = map[key];
-  writeFileSync(join(dataDir, TITLES_FILE), JSON.stringify(sorted, null, 2));
+  writeFileSync(join(dataDir, POLICIES_FILE), JSON.stringify(sorted, null, 2));
 }
 
 /** 会话策略表。启动时读一次，之后一直在内存里。 */

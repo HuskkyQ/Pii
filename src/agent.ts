@@ -17,8 +17,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 
 import { loadModels } from "./provider.ts";
-import type { ApprovalBroker } from "./server/approvals.ts";
-import type { PushHub } from "./server/push.ts";
+import type { ApprovalPort, PushPort } from "./ports.ts";
 import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
 import { imageRefExtension } from "./tools/image-ref.ts";
@@ -34,9 +33,9 @@ export interface AgentOptions {
   /** 工作目录（bash/read/write 的根）；默认 PII_CWD 或启动目录 */
   cwd?: string;
   /** 工具审批中转站。传了就装上审批扩展；不传则工具裸跑。 */
-  approvals?: ApprovalBroker;
+  approvals?: ApprovalPort;
   /** Web Push 推送中心。传了就在「回答完成」时推一条。 */
-  push?: PushHub;
+  push?: PushPort;
   /** 会话标题查询（推送通知的标题用） */
   titleOf?: (conversationId: number) => string | undefined;
   /** 归档目录（压缩前把被替换的原文写进去）；默认 `<数据目录>/archive` */

@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { resolveCwd } from "../../agent.ts";
-import { archiveEntries, listArchives, readArchive } from "../archive.ts";
+import { archiveEntries, listArchives, readArchive } from "../../archive.ts";
 import { createConversation, parseConversationId } from "../conversations.ts";
 import { projectView } from "../project.ts";
 import { TITLE_MAX } from "../titles.ts";
@@ -161,7 +161,7 @@ app.post("/api/import", async (c) => {
   return c.json({ ok: true, conversationId: id, written, title: body.title ?? null });
 });
 
-/** 归档目录：默认 <数据目录>/archive，可用 PII_ARCHIVE_DIR 指到项目里。 */
+/* 归档目录由 agent 层解析（openAgent → Agent.archiveDir），这里直接用，不重复读环境变量。 */
 
 /** 某个会话的归档文件列表（新的在前）。 */
 /**

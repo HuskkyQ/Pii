@@ -10,6 +10,9 @@ FROM ${NODE_IMAGE} AS web
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
+# 前端 import 了根目录的 shared/（@shared 别名），web 阶段的工作目录是 /app/web，
+# 所以必须把它拷到 ../shared，否则 npm run build 直接报 module not found。
+COPY shared /app/shared
 COPY web/ ./
 RUN npm run build
 

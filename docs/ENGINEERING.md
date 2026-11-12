@@ -20,9 +20,14 @@
 src/
 ├── provider.ts        models.json → pi-ai 的 Models（pi-durable 自己不读 models.json）
 ├── agent.ts           打开 Harness + root conversation，调 resume() 开启调度
+├── ports.ts           扩展只用得到的窄端口（审批 / 推送）；实现仍在 server/
+├── archive.ts         归档：原文写 markdown（纯 fs，谁都能依赖它，它不依赖任何人）
 ├── stage0.ts          最小验证：命令行问一句
-├── tools/
-│   └── approval.ts    beforeTool hook → 阻塞等待浏览器点头
+├── tools/             pi-durable 扩展（**不得 import server/**）
+│   ├── approval.ts    beforeTool hook → 阻塞等待浏览器点头
+│   ├── archive-hook.ts  beforeCompact → 压缩前把被替换的原文归档
+│   ├── image-ref.ts   图片 base64 → 落盘 + 文本标记（省 token）
+│   └── notify.ts      GenerationTask.onYield → 「回答完成」推一条
 └── server/
     ├── main.ts        Hono: HTTP + SSE + 静态托管 + pid 锁
     ├── approvals.ts   审批中转站（挂起 / 超时 / 关闭全拒，每个审批带 conversationId）
@@ -32,9 +37,6 @@ src/
     ├── push.ts        Web Push：VAPID 密钥 + 订阅表 + 发送/剪枝
     ├── project.ts     ConversationView → 前端 JSON（含 pi.live 的流式半截投影）
     └── page.ts        阶段 2 的降级测试页（没构建前端时用）
-├── tools/
-│   ├── approval.ts    beforeTool → 阻塞等浏览器点头
-│   └── notify.ts      GenerationTask.onYield → 「回答完成」推一条
 
 web/                   前端（Vite + React + TS + Tailwind v4 + shadcn/ui）
 ├── src/App.tsx              布局 + `?c=<id>` 路由 + 会话切换

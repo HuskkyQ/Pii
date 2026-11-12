@@ -18,7 +18,8 @@
 
     /* Path alias（TS7 去掉了 baseUrl，改用显式路径） */
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shared/*": ["../shared/*"]
     },
 
     /* Linting */
@@ -27,5 +28,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src", "../shared"]
 }

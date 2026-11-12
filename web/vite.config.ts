@@ -25,7 +25,11 @@ export default defineConfig({
     emptyOutDir: false,
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+      // 前后端共享的类型/策略：真实目录在仓库根 shared/（Vite 不读 tsconfig 的 paths，必须在这也配一遍）
+      "@shared": path.resolve(__dirname, "../shared"),
+    },
   },
   server: {
     port: 5173,

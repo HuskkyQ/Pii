@@ -14,7 +14,7 @@
  */
 import { CompactionTask, defineExtension, hook } from "@earendil-works/pi-durable";
 
-import { archiveEntries } from "../server/archive.ts";
+import { archiveEntries } from "../archive.ts";
 
 export interface ArchiveHookOptions {
   archiveDir: string;

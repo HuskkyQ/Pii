@@ -1,21 +1,32 @@
 /**
- * 归档 + 压缩钩子。
+ * 归档：把对话**原文**写成 markdown 落盘，**只增不改**。
  *
  * 两件事要分清，它们解决的不是同一个问题：
  *
- *   归档（本文件的 archiveEntries）
+ *   归档（本文件）
  *     把对话**原文**写成 markdown 落盘，**只增不改**。
  *     目的是「历史不丢」：数据库里的上下文会被压缩掉，但文件里永远能翻到原话。
  *
- *   压缩（pi-durable 自带的 compaction）
+ *   压缩（pi-durable 自带的 compaction，装配在 tools/archive-hook.ts）
  *     上下文快撑满模型窗口时，把较早的部分换成一段摘要，让对话能继续。
  *     目的是「上下文不爆」：不然一长就只能新开会话。
  *
  * 两者串起来的方式：`beforeCompact` 钩子在**摘要生成之前**拿到「即将被替换掉的那些条目」，
  * 先归档成文件，再让 pi-durable 照常压缩。这样被压掉的内容不会凭空消失。
  *
+ * ── 为什么这个文件在 `src/` 根下，而不在 `src/server/` ──
+ * 它属于 **agent 层**（和 agent.ts / provider.ts 同一层），不是 HTTP 层：
+ * 依赖方向只能是
+ *
+ *     src/tools/archive-hook.ts  ─┐
+ *     src/server/routes/files.ts ─┴─→  src/archive.ts  ──→  node:fs
+ *
+ * 也就是：谁都可以依赖它，它不依赖任何人（不认识 HTTP、不认识 pi-durable）。
+ * 反过来放就会变成「钩子去 import server 里的东西」—— 工具层被 HTTP 层倒拖着，
+ * 想单独跑一个不带 web 的 agent 就做不到了。
+ *
  * 归档目录默认 `<数据目录>/archive/<会话id>/`，可用 PII_ARCHIVE_DIR 指到项目里的某个文件夹。
- * 文件名带序号和时间戳，同一份内容不会被覆盖第二次。
+ * 目录**由调用方算好传进来**（本文件只管路径，不管环境变量）。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

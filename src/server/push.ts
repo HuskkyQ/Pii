@@ -17,20 +17,16 @@ import { join } from "node:path";
 
 import webpush from "web-push";
 
+/* 推送的形状与「出口类型」在 ports.ts（agent 层），实现留在本文件。 */
+import type { PushPayload, PushPort } from "../ports.ts";
+export type { PushPayload };
+
 export interface PushSubscriptionRecord {
   endpoint: string;
   keys: { p256dh: string; auth: string };
   /** 订阅时正在看哪个会话；推送里带回去，点通知能跳对地方。 */
   conversationId?: number;
   addedAt: number;
-}
-
-export interface PushPayload {
-  title: string;
-  body: string;
-  conversationId?: number;
-  /** 同一个 tag 的新通知会替换旧的（别让一条会话刷出 10 条） */
-  tag?: string;
 }
 
 export interface PushResult {
@@ -67,7 +63,7 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600 });
 }
 
-export class PushHub {
+export class PushHub implements PushPort {
   #dataDir: string;
   #isWatched: (conversationId: number | undefined) => boolean;
   #keys: VapidKeys;

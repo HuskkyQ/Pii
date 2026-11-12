@@ -13,12 +13,9 @@ import type { Conversation, ConversationId } from "@earendil-works/pi-durable";
 
 import type { Agent } from "../agent.ts";
 
-export interface ConversationSummary {
-  id: number;
-  title: string;
-  /** 有排队或正在跑的输入 —— 列表上那个小圆点 */
-  busy: boolean;
-}
+/* 形状住在 shared/types.ts（会话列表在前端也要用同一份）。 */
+import type { ConversationSummary } from "../../shared/types.ts";
+export type { ConversationSummary };
 
 const TITLE_LIMIT = 42;
 const TITLE_PROBE_ENTRIES = 8;

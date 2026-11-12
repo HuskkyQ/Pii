@@ -7,7 +7,7 @@
  */
 import { GenerationTask, defineExtension, hook } from "@earendil-works/pi-durable";
 
-import type { PushHub } from "../server/push.ts";
+import type { PushPort } from "../ports.ts";
 
 /** AssistantMessage → 纯文本摘要（去掉 thinking 和 toolCall，那两个不适合进通知）。 */
 function textOf(message: unknown): string {
@@ -27,7 +27,7 @@ export interface NotifyOptions {
   titleOf: (conversationId: number) => string | undefined;
 }
 
-export function notifyExtension(push: PushHub, options: NotifyOptions) {
+export function notifyExtension(push: PushPort, options: NotifyOptions) {
   return defineExtension({
     name: "pii-push",
     hooks: [

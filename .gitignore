@@ -13,3 +13,6 @@ data
 
 # 隔离工作区（superpowers worktrees）
 .worktrees/
+
+# brainstorming visual companion 的演示 HTML
+.superpowers/

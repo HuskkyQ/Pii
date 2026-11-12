@@ -13,3 +13,4 @@ data
 
 # 隔离工作区（superpowers worktrees）
 .worktrees/
+.gstack/

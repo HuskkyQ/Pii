@@ -77,9 +77,9 @@ say "基线 commit: $HEAD  $(git log -1 --format=%s)"
 # ---------------------------------------------------------------- 2. 编译 + 构建
 STEP="build"
 say "构建新镜像 pii:candidate"
-# 必须走 build.sh：它固定了 DOCKER_BUILDKIT=1 和 APT_MIRROR 国内源。
+# 必须走 build.sh：它固定了 Compose 内置 BuildKit 和 APT_MIRROR 国内源。
 # 以前这里写裸 docker build，漏传 build-arg 且用了经典 builder，
-# apt 层缓存全废，境外源 17KB/s，一次部署要 40 分钟以上。
+# apt 层缓存全废，境外源 17KB/s，一次部署要 40 分钟以上（实测 2622 秒）。
 if ! bash "$REPO/deploy/build.sh" pii:candidate >>"$LOG" 2>&1; then
   fail "镜像构建失败（语法错误/依赖问题？查看 $LOG）生产未受影响"
 fi

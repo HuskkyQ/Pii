@@ -125,9 +125,19 @@ Dockerfile 的默认值 `deb.debian.org`）。参数一变，Docker 层缓存 ke
 builder 不同，缓存本来也不共享。于是 apt 层、npm 层每次全部重跑，
 境外源实测 17KB/s，22MB 包拖了 **2622 秒**，而生产容器一直好好的没受影响。
 
-→ 两条部署路径现在都调 `deploy/build.sh`：固定 `DOCKER_BUILDKIT=1` +
-  `--build-arg APT_MIRROR=mirrors.aliyun.com`，配方和记事本只留一份。
-  换源只需 `APT_MIRROR=mirrors.tencent.com bash deploy/build.sh pii:candidate`。
+→ 两条部署路径现在都调 `deploy/build.sh`：用 **Compose 内置 BuildKit** +
+  国内 apt 源，产物经 `PII_IMAGE` 打到指定 tag（构建阶段不覆盖 `pii:server`）。
+  配方和记事本只留一份，换源只需
+  `APT_MIRROR=mirrors.tencent.com bash deploy/build.sh pii:candidate`。
+
+**为什么不用 `DOCKER_BUILDKIT=1 docker build`**：这台机器
+`~/.docker/cli-plugins/docker-buildx` 是个 228KB 的残缺文件，盖住了系统里正常的
+64MB 插件，显式开 BuildKit 会直接 `segmentation fault`。Compose v2 走自己内置的
+BuildKit，不依赖这个 CLI 插件。插件本身还没修（修它要动宿主机文件，另行确认），
+但构建路径已经绕开，不受影响。
+
+**修复后实测**：同一份代码构建 **9 秒、9 层 CACHED**（原来 2622 秒）；
+`pii:server` 与运行中的容器全程未被触碰。
 
 ## 自我更新（手机上让 pii 改自己）
 

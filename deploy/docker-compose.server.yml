@@ -4,8 +4,8 @@
 #   ./deploy/deploy.sh                                   # 一条命令部署
 #   docker compose -f deploy/docker-compose.server.yml up -d
 #
-# 镜像构建统一走 deploy/build.sh（固定 BuildKit + 国内 apt 源）；
-# 下面的 build.args 只是手动 `up -d --build` 时的兜底，值要和 build.sh 一致。
+# 镜像构建统一走 deploy/build.sh（Compose 内置 BuildKit + 国内 apt 源）；
+# 下面的 build.args 是构建时实际生效的换源参数，值要和 build.sh 一致。
 #
 # 和根目录 docker-compose.yml 的区别：
 #   根目录那份是「一台机器全包」（Caddy 也跑容器里、占 80/443）
@@ -20,7 +20,9 @@ services:
       # 换阿里云源几十秒就完。换源逻辑写在 Dockerfile 的 apt 那一层里。
       args:
         APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
-    image: pii:server
+    # build.sh 用 PII_IMAGE 把产物打到 pii:candidate，避免构建时就覆盖生产 tag；
+    # 不设时默认 pii:server，deploy.sh 的 up -d 仍用它。
+    image: ${PII_IMAGE:-pii:server}
     container_name: pii-test
     restart: unless-stopped
     # 账号密码登录的凭证（PII_USER / PII_PASS_HASH）放在宿主机文件里，

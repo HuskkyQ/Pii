@@ -19,10 +19,10 @@ interface ComposerProps {
   /** 当前会话的工作目录 */
   cwd?: string;
   onSent?: () => void;
-  onOpenModels: () => void;
-  onOpenCwd: () => void;
+  onOpenModels: (anchor: HTMLElement) => void;
+  onOpenCwd: (anchor: HTMLElement) => void;
   /** 打开权限面板 */
-  onOpenPermissions: () => void;
+  onOpenPermissions: (anchor: HTMLElement) => void;
   /** 当前会话的权限预设（决定 chip 文案/颜色）；null = 未加载 */
   permissionPreset?: PresetId | null;
   /** 被引用的原文（点了某条消息的引用按钮） */
@@ -188,7 +188,7 @@ export function Composer({
         <div className="mb-1 flex items-center">
           <button
             type="button"
-            onClick={onOpenCwd}
+            onClick={(event) => onOpenCwd(event.currentTarget)}
             title={cwd ?? "选择工作目录"}
             className="flex min-w-0 items-center gap-1 rounded-full px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-accent-foreground"
           >
@@ -293,7 +293,7 @@ export function Composer({
         <div className="mt-1.5 flex items-center gap-2">
           <button
             type="button"
-            onClick={onOpenPermissions}
+            onClick={(event) => onOpenPermissions(event.currentTarget)}
             title="工具执行权限（按会话）"
             className={cn(
               "flex min-w-0 shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] transition-colors hover:bg-accent/60 hover:text-accent-foreground",
@@ -327,7 +327,7 @@ export function Composer({
 
           <button
             type="button"
-            onClick={onOpenModels}
+            onClick={(event) => onOpenModels(event.currentTarget)}
             className="flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-accent-foreground"
           >
             <span className="size-1.5 shrink-0 rounded-full bg-emerald-500/80" aria-hidden />

@@ -11,7 +11,7 @@ interface ListProps {
   onSelect: (id: number) => void;
   onCreate: () => void;
   /** 新建会话后立刻弹出目录选择（选在哪个项目里干活） */
-  onCreateWithCwd?: () => void;
+  onCreateWithCwd?: (anchor: HTMLElement) => void;
   creating: boolean;
   onDelete?: (id: number) => Promise<void>;
 }
@@ -37,7 +37,7 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
           size="icon"
           variant="ghost"
           className="size-7"
-          onClick={onCreateWithCwd}
+          onClick={(event) => onCreateWithCwd?.(event.currentTarget)}
           disabled={creating || !onCreateWithCwd}
           aria-label="新建会话并选目录"
           title="新建会话并选项目目录"

@@ -68,14 +68,16 @@ function readInitialConversation(): number | undefined {
 /** 落在头部下方：安全区 + 头部高度(≈48) + 一点缝。 */
 const TOAST_OFFSET = { top: "calc(env(safe-area-inset-top) + 56px)" };
 
+type PickerKind = "model" | "cwd" | "permissions";
+type OpenPicker = { kind: PickerKind; anchor: HTMLElement } | null;
+
 export default function App() {
   const [activeId, setActiveId] = useState<number | undefined>(readInitialConversation);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [modelOpen, setModelOpen] = useState(false);
-  const [cwdOpen, setCwdOpen] = useState(false);
+  const [picker, setPicker] = useState<OpenPicker>(null);
   /** 刚新建的会话 id：目录选择器要作用于它（而不是还未来得及切过去的 currentId） */
   const [cwdTarget, setCwdTarget] = useState<number | undefined>(undefined);
-  const [permOpen, setPermOpen] = useState(false);
+  const closePicker = useCallback(() => setPicker(null), []);
   const [quote, setQuote] = useState<string | null>(null);
 
   const { items, refresh, create, creating } = useConversations();
@@ -137,12 +139,15 @@ export default function App() {
    * 为什么不把「选目录」套在每个新建上：大部分时候你就在同一个项目里连续开几个会话，
    * 每建一个都要选一次目录很烦。所以「+」沿用当前目录，「📁+」才弹选择器。
    */
-  const createNewWithCwd = useCallback(async () => {
-    const id = await create();
-    select(id);
-    setCwdTarget(id);
-    setCwdOpen(true);
-  }, [create, select]);
+  const createNewWithCwd = useCallback(
+    async (anchor: HTMLElement) => {
+      const id = await create();
+      select(id);
+      setCwdTarget(id);
+      setPicker({ kind: "cwd", anchor });
+    },
+    [create, select],
+  );
 
   /**
    * 重命名当前会话。空串表示恢复自动标题（从第一条用户消息推）。
@@ -202,7 +207,7 @@ export default function App() {
           activeId={currentId}
           onSelect={select}
           onCreate={() => void createNew()}
-          onCreateWithCwd={() => void createNewWithCwd()}
+          onCreateWithCwd={(anchor) => void createNewWithCwd(anchor)}
           creating={creating}
           onDelete={remove}
         />
@@ -246,12 +251,12 @@ export default function App() {
               conversationId={currentId}
               model={snapshot?.agent?.model}
               cwd={snapshot?.agent?.cwd}
-              onOpenModels={() => setModelOpen(true)}
-              onOpenCwd={() => {
+              onOpenModels={(anchor) => setPicker({ kind: "model", anchor })}
+              onOpenCwd={(anchor) => {
                 setCwdTarget(undefined);
-                setCwdOpen(true);
+                setPicker({ kind: "cwd", anchor });
               }}
-              onOpenPermissions={() => setPermOpen(true)}
+              onOpenPermissions={(anchor) => setPicker({ kind: "permissions", anchor })}
               permissionPreset={permissionPreset}
               quote={quote}
               onClearQuote={() => setQuote(null)}
@@ -265,18 +270,20 @@ export default function App() {
          * 52px ≈ 头部高度，env() 在浏览器里是 0，不影响桌面。
          */}
         <ModelPicker
-          open={modelOpen}
+          open={picker?.kind === "model"}
+          anchor={picker?.kind === "model" ? picker.anchor : null}
           conversationId={currentId}
           current={snapshot?.agent?.model}
-          onClose={() => setModelOpen(false)}
+          onClose={closePicker}
           onPicked={() => void refresh()}
         />
 
         <CwdPicker
-          open={cwdOpen}
+          open={picker?.kind === "cwd"}
+          anchor={picker?.kind === "cwd" ? picker.anchor : null}
           conversationId={cwdTarget ?? currentId}
           onClose={() => {
-            setCwdOpen(false);
+            closePicker();
             setCwdTarget(undefined);
           }}
           onPicked={() => {
@@ -286,11 +293,12 @@ export default function App() {
         />
 
         <PermissionPicker
-          open={permOpen}
+          open={picker?.kind === "permissions"}
+          anchor={picker?.kind === "permissions" ? picker.anchor : null}
           policy={policy}
           preset={permissionPreset}
           onApply={updatePolicy}
-          onClose={() => setPermOpen(false)}
+          onClose={closePicker}
         />
 
         <DebugHud />

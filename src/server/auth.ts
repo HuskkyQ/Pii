@@ -31,6 +31,8 @@ import { join } from "node:path";
 
 import type { Context } from "hono";
 
+import { loadConfig } from "../config.ts";
+
 const COOKIE = "pii_token";
 const TOKEN_FILE = "auth-token";
 
@@ -102,15 +104,17 @@ export interface Auth {
 }
 
 export function createAuth(dataDir: string): Auth {
-  const enabled = process.env.PII_AUTH === "1" || Boolean(process.env.PII_TOKEN);
-  const token = enabled ? (process.env.PII_TOKEN ?? readOrCreateToken(dataDir)) : "";
+  const config = loadConfig();
+  // 「要求开鉴权」与「有令牌」都算要开；真正建 auth-token 文件的副作用只在这里（config 只读）
+  const enabled = config.authRequested || Boolean(config.tokenEnv);
+  const token = enabled ? (config.tokenEnv ?? readOrCreateToken(dataDir)) : "";
 
-  const user = (process.env.PII_USER ?? "").trim();
-  const passHash = (process.env.PII_PASS_HASH ?? "").trim();
+  const user = config.user;
+  const passHash = config.passHash;
   const passwordEnabled = enabled && Boolean(user && passHash);
 
   // 令牌提示里该敲哪条命令：默认指向真实数据目录，服务器上可用 PII_TOKEN_HINT 覆盖
-  const tokenHint = (process.env.PII_TOKEN_HINT ?? "").trim() || `cat ${join(dataDir, TOKEN_FILE)}`;
+  const tokenHint = config.tokenHintEnv || `cat ${join(dataDir, TOKEN_FILE)}`;
 
   /** scrypt 校验。哈希格式：scrypt$<saltBase64>$<hashBase64>（脚本见 scripts/hash-password.mjs） */
   const verifyPassword = (plain: string): boolean => {

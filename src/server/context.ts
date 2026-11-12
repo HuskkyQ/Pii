@@ -9,28 +9,22 @@
  *
  * 纪律：这一段是**纯搬迁**。初始化顺序、启动日志、副作用一律保持原样。
  */
-import {
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { hostname } from "node:os";
+import { readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Conversation } from "@earendil-works/pi-durable";
 
 import type { Agent } from "../agent.ts";
-import { openAgent, resolveDataDir } from "../agent.ts";
+import { openAgent } from "../agent.ts";
+import { loadConfig, resolveArchiveDir, resolveDataDir } from "../config.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
 import { openConversation } from "./conversations.ts";
 import { createAuth, type Auth } from "./auth.ts";
 import { keepAwake, type AwakeHandle } from "./awake.ts";
+import { openTaskQueries, type RunFailure } from "./db/tasks.ts";
+import { acquireLock } from "./db/lock.ts";
 import { LastConversation } from "./last-conversation.ts";
 import { Policies, defaultPolicy, presetOf } from "./policies.ts";
 import { PushHub } from "./push.ts";
@@ -45,24 +39,16 @@ const startedAt = Date.now();
 /** 本文件所在目录 = 原 main.ts 所在目录，供 /api/build 扫 .ts 判断「要不要重启」。 */
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** 一屏大概 5 轮对话（用户消息 + 最终回答 = 2 条 → 10 条）。 */
-const SNAPSHOT_TURNS = Number(process.env.PII_SNAPSHOT_TURNS ?? 5);
-
 /**
- * `Conversation.watch()` 的视图窗口大小（pi-durable 1.5 起 `viewState()` 被它取代）。
- * 开到比任何真实会话都大，翻页游标 `?before=` 才不会让历史凭空消失。
+ * 快照窗口参数。durationOf 由调用方注入，避免这里反向依赖 createContext 内部状态。
  */
-const VIEW_WINDOW = {
-  min: Number(process.env.PII_VIEW_ENTRIES ?? 2000),
-  max: Number(process.env.PII_VIEW_ENTRIES ?? 2000),
-};
-
-/** 快照窗口参数。durationOf 由调用方注入，避免这里反向依赖 createContext 内部状态。 */
 function windowOptions(
   input: { turns?: string; limit?: string; before?: string },
   durationOf: (taskId: number) => number | undefined,
+  /** 默认窗口轮数（`PII_SNAPSHOT_TURNS`，一屏大概 5 轮）。 */
+  defaultTurns: number,
 ) {
-  const turns = input.turns === undefined ? SNAPSHOT_TURNS : Number(input.turns);
+  const turns = input.turns === undefined ? defaultTurns : Number(input.turns);
   const limit = input.limit === undefined ? undefined : Number(input.limit);
   const before = input.before === undefined ? undefined : Number(input.before);
   return {
@@ -73,13 +59,7 @@ function windowOptions(
   };
 }
 
-/** 最近一次失败的运行，随快照一起发给前端画红条。 */
-export interface RunFailure {
-  taskId: number;
-  message: string;
-  reason?: string;
-  at?: number;
-}
+export type { RunFailure };
 
 /**
  * 路由与中间件能用到的全部共享状态。
@@ -126,44 +106,6 @@ export interface AppContext {
   shutdown: (reason: string) => Promise<void>;
 }
 
-/**
- * 一个 storage 只能被一个进程持有；用一个锁文件兜住。
- *
- * 锁文件里存 `主机名:pid`，不只是一个 pid。为什么：
- *   容器被 `docker rm -f` 杀掉时不会走优雅退出，锁文件留在数据目录里。
- *   下次启动如果只看 pid，就可能撞上「新容器里恰好也有个同号进程」，
- *   于是永远启动不了（crash loop）。加上主机名之后：
- *     - 主机名不同 → 上一代容器的残留，直接覆盖
- *     - 主机名相同且进程还在 → 真的重复启动，拒绝
- */
-function acquireLock(dir: string): () => void {
-  mkdirSync(dir, { recursive: true });
-  const lockPath = join(dir, "server.lock");
-  const identity = `${hostname()}:${process.pid}`;
-
-  try {
-    const raw = readFileSync(lockPath, "utf8").trim();
-    // 兼容老格式（纯 pid）
-    const [maybeHost, maybePid] = raw.includes(":") ? raw.split(":") : [undefined, raw];
-    const existingHost = maybeHost;
-    const existingPid = Number(maybePid);
-
-    const sameHost = existingHost === undefined ? true : existingHost === hostname();
-    if (sameHost && existingPid && existingPid !== process.pid) {
-      try {
-        process.kill(existingPid, 0);
-        throw new Error(`已经有 pii 在跑（pid ${existingPid}），数据目录 ${dir}`);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      }
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-
-  writeFileSync(lockPath, identity);
-  return () => rmSync(lockPath, { force: true });
-}
 
 /** 递归找目录里最新的文件修改时间（只看 .ts，跳过 node_modules）。 */
 function newestMtime(dir: string): number {
@@ -188,6 +130,7 @@ function newestMtime(dir: string): number {
  * 打印启动日志 —— 都是启动期副作用，调用方只应调用一次。
  */
 export async function createContext(): Promise<AppContext> {
+  const config = loadConfig();
   const dataDir = resolveDataDir();
   const releaseLock = acquireLock(dataDir);
   /** 每个会话的工具审批策略（哪些工具免问）。 */
@@ -260,7 +203,7 @@ export async function createContext(): Promise<AppContext> {
   console.log(`  数据目录  ${dirname(agent.dbPath)}`);
   console.log(`  模型      ${agent.provider}/${agent.modelId}`);
   console.log(
-    `  工具      ${process.env.PII_TOOLS === "0" ? "关" : `开（默认策略：${presetOf(defaultPolicy())}，可在界面按会话调整）`}`,
+    `  工具      ${config.toolsEnabled ? `开（默认策略：${presetOf(defaultPolicy())}，可在界面按会话调整）` : "关"}`,
   );
   console.log(`  推送      ${push.enabled ? `开（订阅 ${push.list().length} 个）` : "关"}`);
   const awake = keepAwake();
@@ -273,79 +216,12 @@ export async function createContext(): Promise<AppContext> {
     }`,
   );
 
-  /**
-   * 生成耗时（思考用时的兵底）：每条 assistant entry 的 `byTaskId` 对应 tasks 表里一次生成，
-   * 记录有 startedAt/endedAt。用一个**只读连接 + 缓存**按 taskId 取（已落定不变，永久缓存）。
-   * 前端实时计时（精确）会优先覆盖它；这里只给历史消息一个可复现的近似值。
-   */
-  let durationDb: DatabaseSync | null = null;
-  const durationCache = new Map<number, number | undefined>();
-  function taskDuration(taskId: number): number | undefined {
-    if (durationCache.has(taskId)) return durationCache.get(taskId);
-    let value: number | undefined;
-    try {
-      if (!durationDb) {
-        durationDb = new DatabaseSync(agent.dbPath, { readOnly: true });
-        durationDb.exec("PRAGMA busy_timeout = 1000");
-      }
-      const row = durationDb.prepare("SELECT record FROM tasks WHERE id = ?").get(taskId) as
-        | { record?: string }
-        | undefined;
-      if (row?.record) {
-        const record = JSON.parse(row.record) as { startedAt?: unknown; endedAt?: unknown };
-        if (typeof record.startedAt === "number" && typeof record.endedAt === "number") {
-          value = Math.max(0, record.endedAt - record.startedAt);
-        }
-      }
-    } catch {
-      /* 读不到就当没有，不影响主流程 */
-    }
-    durationCache.set(taskId, value);
-    return value;
-  }
-
-  /**
-   * 最近一次失败的运行。
-   *
-   * 为什么需要：模型不可达（隧道断了、API key 失效、被限流）时，pi-durable 只把任务标成
-   * `failed`，**不会往对话里写任何东西** —— 用户看到的就是「消息发出去，永远没有回复」。
-   * 实测过：隧道断了之后界面完全没提示，只能靠猜。
-   *
-   * 这里从 tasks 表里捞最近一条失败记录，随快照一起发出去，前端画一条红色提示。
-   */
-  function latestFailure(conversationId: number): RunFailure | null {
-    try {
-      if (!durationDb) {
-        durationDb = new DatabaseSync(agent.dbPath, { readOnly: true });
-        durationDb.exec("PRAGMA busy_timeout = 1000");
-      }
-      const row = durationDb
-        .prepare(
-          "SELECT id, record FROM tasks WHERE conversation_id = ? AND status = 'terminal' ORDER BY id DESC LIMIT 1",
-        )
-        .get(conversationId) as { id?: number; record?: string } | undefined;
-      if (!row?.record) return null;
-
-      const record = JSON.parse(row.record) as {
-        endedAt?: unknown;
-        state?: { outcome?: { status?: string; error?: { message?: string; detail?: { reason?: string } } } };
-      };
-      const outcome = record.state?.outcome;
-      if (outcome?.status !== "failed") return null;
-
-      return {
-        taskId: Number(row.id),
-        message: outcome.error?.message ?? "运行失败",
-        ...(outcome.error?.detail?.reason ? { reason: outcome.error.detail.reason } : {}),
-        ...(typeof record.endedAt === "number" ? { at: record.endedAt } : {}),
-      };
-    } catch {
-      return null;
-    }
-  }
+  /* 生成耗时 / 最近一次失败：都在 db/tasks.ts（惰性只读连接 + duration 缓存）。 */
+  const { taskDuration, latestFailure } = openTaskQueries(agent.dbPath);
 
   /** 以下定义原本散落在 main.ts 的路由之间，现收进 ctx 供多个模块共用。 */
-  const archiveDir = process.env.PII_ARCHIVE_DIR ?? join(dataDir, "archive");
+  /** 归档目录：`PII_ARCHIVE_DIR` → `<数据目录>/archive`（解析在 config.ts）。 */
+  const archiveDir = resolveArchiveDir(dataDir);
   const clientMetrics: unknown[] = [];
   const flags = { restartPending: false };
 
@@ -380,8 +256,12 @@ export async function createContext(): Promise<AppContext> {
     archiveDir,
     clientMetrics,
     flags,
-    viewWindow: VIEW_WINDOW,
-    windowOptions: (input) => windowOptions(input, taskDuration),
+    /*
+     * `Conversation.watch()` 的视图窗口大小（pi-durable 1.5 起 `viewState()` 被它取代）。
+     * 开到比任何真实会话都大，翻页游标 `?before=` 才不会让历史凭空消失。
+     */
+    viewWindow: { min: config.viewEntries, max: config.viewEntries },
+    windowOptions: (input) => windowOptions(input, taskDuration, config.snapshotTurns),
     resolveConversation,
     isIdle,
     attachServer,

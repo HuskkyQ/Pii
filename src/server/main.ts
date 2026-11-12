@@ -12,6 +12,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
 
+import { loadConfig } from "../config.ts";
 import { createContext } from "./context.ts";
 import { registerAuth } from "./auth-routes.ts";
 import { registerStatic } from "./static.ts";
@@ -20,8 +21,9 @@ import { registerMeta } from "./routes/meta.ts";
 import { registerRun } from "./routes/run.ts";
 import { registerSession } from "./routes/session.ts";
 
-const port = Number(process.env.PII_PORT ?? 8787);
-const host = process.env.PII_HOST ?? "127.0.0.1";
+const config = loadConfig();
+const port = config.port;
+const host = config.host;
 
 const ctx = await createContext();
 const app = new Hono();

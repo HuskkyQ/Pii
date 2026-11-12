@@ -15,13 +15,16 @@
  */
 import { spawn } from "node:child_process";
 
+import { loadConfig } from "../config.ts";
+
 export interface AwakeHandle {
   active: boolean;
   stop: () => void;
 }
 
 export function keepAwake(): AwakeHandle {
-  const disabled = process.env.PII_KEEP_AWAKE === "0";
+  // PII_KEEP_AWAKE 默认「拦」；只有显式设成 "0" 才关
+  const disabled = !loadConfig().keepAwake;
   if (process.platform !== "darwin" || disabled) {
     return { active: false, stop: () => {} };
   }

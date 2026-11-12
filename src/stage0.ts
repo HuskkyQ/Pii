@@ -7,10 +7,12 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { AssistantEntry, Harness, MemoryStorage, createRegistry } from "@earendil-works/pi-durable";
 
+import { loadConfig } from "./config.ts";
 import { loadModels } from "./provider.ts";
 
-const PROVIDER = process.env.PII_PROVIDER ?? "magpie";
-const MODEL = process.env.PII_MODEL ?? "workbuddy/deepseek-v4.1-flash";
+const config = loadConfig();
+const PROVIDER = config.provider;
+const MODEL = config.modelId;
 const PROMPT = process.argv.slice(2).join(" ") || "用一句话介绍你自己。";
 
 const models = await loadModels();

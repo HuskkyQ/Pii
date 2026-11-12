@@ -6,7 +6,6 @@
  *  - root conversation 是"第一次调用创建，重启后还是同一个"
  *  - 同一个 storage 只能被一个进程持有，所以 server 必须单实例
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -17,6 +16,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 
 import { loadModels } from "./provider.ts";
+import { loadConfig, resolveArchiveDir, resolveCwd, resolveDataDir } from "./config.ts";
 import type { ApprovalPort, PushPort } from "./ports.ts";
 import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
@@ -63,30 +63,29 @@ export interface Agent {
  *
  * 默认是「启动 npm start 时所处的目录」，可以用 PII_CWD 指定；
  * 每个会话还能单独改（`POST /api/cwd`），改完只影响那一个会话。
+ *
+ * 实现在 `config.ts`（环境变量的唯一读取点）；这里 re-export 是给
+ * `context.ts`、`routes/files.ts` 里那些 `from "../agent.ts"` 的旧进口用了。
  */
-export function resolveCwd(override?: string): string {
-  return override ?? process.env.PII_CWD ?? process.cwd();
-}
-
-export function resolveDataDir(override?: string): string {
-  return override ?? process.env.PII_DATA_DIR ?? join(homedir(), ".pii");
-}
+export { resolveCwd, resolveDataDir };
 
 export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
-  const provider = options.provider ?? process.env.PII_PROVIDER ?? "magpie";
-  const modelId = options.modelId ?? process.env.PII_MODEL ?? "workbuddy/deepseek-v4.1-flash";
-  const withTools = options.tools ?? process.env.PII_TOOLS !== "0";
+  const config = loadConfig();
+  const provider = options.provider ?? config.provider;
+  const modelId = options.modelId ?? config.modelId;
+  const withTools = options.tools ?? config.toolsEnabled;
   const cwd = resolveCwd(options.cwd);
-  const dbPath = join(resolveDataDir(options.dataDir), "agent.sqlite");
+  const dataDir = resolveDataDir(options.dataDir);
+  const dbPath = join(dataDir, "agent.sqlite");
 
   const models = await loadModels();
   if (!models.getModel(provider, modelId)) {
     throw new Error(`找不到模型 ${provider}/${modelId}，检查 ~/.pi/agent/models.json`);
   }
 
-  const archiveDir = options.archiveDir ?? process.env.PII_ARCHIVE_DIR ?? join(resolveDataDir(options.dataDir), "archive");
-  const imageDir = join(resolveDataDir(options.dataDir), "images");
-  const withImageRef = process.env.PII_IMAGE_REF !== "0";
+  const archiveDir = resolveArchiveDir(dataDir, options.archiveDir);
+  const imageDir = join(dataDir, "images");
+  const withImageRef = config.imageRef;
 
   const registry = createRegistry();
   if (withTools) registry.install(CodingTools);
@@ -97,7 +96,7 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
       imageRefExtension({
         imageDir,
         onExternalized: ({ files }) => {
-          if (process.env.PII_IMAGE_REF_QUIET !== "1") console.log(`  图片外置  ${files} 张 → ${imageDir}`);
+          if (!config.imageRefQuiet) console.log(`  图片外置  ${files} 张 → ${imageDir}`);
         },
       }),
     );
@@ -124,12 +123,13 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
        *   reserveTokens   给回答留的空间；上下文到「窗口 - 它」就开始压缩
        *   keepRecentTokens 最近这么多 token 的原文保留不动
        * 这里允许用环境变量调，方便小窗口模型（128k）和大窗口模型共用一份配置。
+       * 注意「没设就不写这个 key」：写进去 undefined/NaN 会弄坏 pi-durable 的默认值。
        */
       settings: {
         compaction: {
-          ...(process.env.PII_COMPACT_RESERVE ? { reserveTokens: Number(process.env.PII_COMPACT_RESERVE) } : {}),
-          ...(process.env.PII_COMPACT_KEEP ? { keepRecentTokens: Number(process.env.PII_COMPACT_KEEP) } : {}),
-          ...(process.env.PII_COMPACT_OFF === "1" ? { enabled: false } : {}),
+          ...(config.compactReserve !== undefined ? { reserveTokens: config.compactReserve } : {}),
+          ...(config.compactKeep !== undefined ? { keepRecentTokens: config.compactKeep } : {}),
+          ...(config.compactOff ? { enabled: false } : {}),
         },
       },
       ...(withTools
@@ -144,7 +144,7 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
   });
 
   // 思考等级可以在会话中途改；改了才会出现 thinking 块。
-  const thinkingLevel = options.thinkingLevel ?? process.env.PII_THINKING;
+  const thinkingLevel = options.thinkingLevel ?? config.thinkingLevel;
   if (thinkingLevel) {
     await root.configure({ thinkingLevel: thinkingLevel as never }, BACKGROUND_CONTEXT);
   }

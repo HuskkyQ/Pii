@@ -19,6 +19,7 @@
 ```
 src/
 ├── provider.ts        models.json → pi-ai 的 Models（pi-durable 自己不读 models.json）
+├── config.ts          全部 PII_* 环境变量的唯一读取点（loadConfig / resolveDataDir / resolveCwd / resolveArchiveDir）
 ├── agent.ts           打开 Harness + root conversation，调 resume() 开启调度
 ├── ports.ts           扩展只用得到的窄端口（审批 / 推送）；实现仍在 server/
 ├── archive.ts         归档：原文写 markdown（纯 fs，谁都能依赖它，它不依赖任何人）
@@ -30,6 +31,10 @@ src/
 │   └── notify.ts      GenerationTask.onYield → 「回答完成」推一条
 └── server/
     ├── main.ts        Hono: HTTP + SSE + 静态托管 + pid 锁
+    ├── context.ts     组合根：按顺序接线 + 启动日志（不含环境变量解析，也不内嵌 SQL）
+    ├── db/
+    │   ├── lock.ts    进程锁（主机名:pid，防容器重建撞号）
+    │   └── tasks.ts   tasks 表只读查询（生成耗时 / 最近一次失败）
     ├── approvals.ts   审批中转站（挂起 / 超时 / 关闭全拒，每个审批带 conversationId）
     ├── policies.ts    每个会话的工具白名单（哪些工具免问）+ 预设档位
     ├── conversations.ts  多会话：列表 / 新建 / 打开（标题优先自定义，否则从第一条用户消息推）

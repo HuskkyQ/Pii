@@ -14,6 +14,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { loadConfig } from "../config.ts";
+
 /*
  * 形状和预设住在 shared/policies.ts（前端也要用同一份）。
  * 这里 re-export 保持 `./policies.ts` 的旧 import 继续可用；
@@ -43,8 +45,11 @@ function clonePolicy(policy: Policy): Policy {
  *  - 未设置 → 只读自动（read-only）
  *  - 逗号分隔工具名（如 "read,edit"）；含 `*` 视为全部放行
  *  - 设为空串 → 全问（ask-all）
+ *
+ * 注意：这里的「未设置」走 `DEFAULT_PRESET`；而 `ApprovalBroker` 构造函数里
+ * 对同一个变量的「未设置」走 `?? "read"` —— 两处语义不同，不要合并成一个默认值。
  */
-export function defaultPolicy(env: string | undefined = process.env.PII_AUTO_ALLOW): Policy {
+export function defaultPolicy(env: string | undefined = loadConfig().autoAllowEnv): Policy {
   if (env === undefined) return clonePolicy(PRESETS[DEFAULT_PRESET]);
   const names = env.split(",").map((s) => s.trim()).filter(Boolean);
   if (names.includes("*")) return clonePolicy(PRESETS.all);

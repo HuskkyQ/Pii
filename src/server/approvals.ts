@@ -11,6 +11,8 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { loadConfig } from "../config.ts";
+
 /* 审批的「出口类型」在 ports.ts（agent 层），实现留在本文件；request() 是对接点。 */
 import type { ApprovalOutcome, ApprovalPort } from "../ports.ts";
 export type { ApprovalOutcome };
@@ -47,8 +49,9 @@ export class ApprovalBroker implements ApprovalPort {
   constructor(options: ApprovalBrokerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.#shouldAutoAllow = options.shouldAutoAllow;
+    /* `?? "read"` 这层回退留在调用点：和 policies.ts 的 DEFAULT_PRESET 不是同一回事。 */
     this.autoAllow = new Set(
-      options.autoAllow ?? (process.env.PII_AUTO_ALLOW ?? "read").split(",").map((s) => s.trim()),
+      options.autoAllow ?? (loadConfig().autoAllowEnv ?? "read").split(",").map((s) => s.trim()),
     );
   }
 

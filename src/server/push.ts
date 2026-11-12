@@ -17,6 +17,8 @@ import { join } from "node:path";
 
 import webpush from "web-push";
 
+import { loadConfig } from "../config.ts";
+
 /* 推送的形状与「出口类型」在 ports.ts（agent 层），实现留在本文件。 */
 import type { PushPayload, PushPort } from "../ports.ts";
 export type { PushPayload };
@@ -71,17 +73,14 @@ export class PushHub implements PushPort {
   #enabled: boolean;
 
   constructor(options: PushHubOptions) {
+    const config = loadConfig();
     this.#dataDir = options.dataDir;
     this.#isWatched = options.isWatched ?? (() => false);
-    this.#enabled = process.env.PII_PUSH !== "0";
+    this.#enabled = config.pushEnabled;
 
     this.#keys = this.#loadOrCreateKeys();
     if (this.#enabled) {
-      webpush.setVapidDetails(
-        process.env.PII_VAPID_SUBJECT ?? "mailto:pii@localhost",
-        this.#keys.publicKey,
-        this.#keys.privateKey,
-      );
+      webpush.setVapidDetails(config.vapidSubject, this.#keys.publicKey, this.#keys.privateKey);
     }
 
     const stored = readJson<PushSubscriptionRecord[]>(join(this.#dataDir, SUBS_FILE)) ?? [];

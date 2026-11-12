@@ -96,6 +96,20 @@ export async function openConversation(
   id: number | undefined,
 ): Promise<Conversation | undefined> {
   if (id === undefined) return agent.root;
+  /*
+   * 先问存储「这一行还在不在」，再问 Harness 要句柄。
+   *
+   * 为什么要两道：`harness.conversation()` 会把**打开过的会话缓存在内存里**。
+   * 行被删掉（DELETE /api/conversations/:id 会当场 purge）之后，它依旧返回一个句柄，
+   * 真正的报错要等到第一次读（watch/entries）才抛：
+   *
+   *     StorageRequestError: Unknown conversation: 7
+   *
+   * hono 把它兑成 500 —— 用户看到的是「服务器坏了」，而我们想表达的是「这会话不在了」。
+   * 所以这里直接用存储层的一次主键查询做存在性校验（O(1)，不进 Harness 缓存）。
+   */
+  const record = await agent.storage.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+  if (!record) return undefined;
   return agent.harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
 }
 

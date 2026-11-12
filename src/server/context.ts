@@ -227,7 +227,19 @@ export async function createContext(): Promise<AppContext> {
 
   async function resolveConversation(id: number | undefined): Promise<Conversation | undefined> {
     if (id !== undefined && trash.has(id)) return undefined;
-    return openConversation(agent, id);
+    try {
+      return await openConversation(agent, id);
+    } catch (error) {
+      /*
+       * 第二道网（第一道在 conversations.ts 的 openConversation：先查存储行是否还在）。
+       * 剩下能漏过第一道的只有一种情况：查证之后、真正读之前，另一次删除把它 purge 了。
+       * 这时 pi-durable 抛 `StorageRequestError: Unknown conversation: N`，对外同样是「不存在」。
+       * 只认这一种错误，其它故障（库读不了、权限、磁盘）照旧抛出去成 500，不吞。
+       */
+      const message = (error as Error)?.message ?? "";
+      if (/Unknown conversation/i.test(message)) return undefined;
+      throw error;
+    }
   }
 
   async function isIdle(): Promise<boolean> {

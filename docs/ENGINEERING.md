@@ -252,6 +252,12 @@ URL 里没会话就只剩 root。所以当前会话 id 走**两层持久化**，
 
 前端因此按「先切走 → 等 0.5 秒让旧 SSE 断开 → 再发 DELETE」的顺序做。
 
+还有一个配套的保险（踩过坑才加的）：`resolveConversation` → `openConversation` 会**先用
+`storage.conversation(id)` 问一句「这一行还在不在」**，再向 Harness 要句柄。
+因为 `harness.conversation()` 会把打开过的会话**缓存在内存里** —— 行删了它照样返回一个句柄，
+真正的错要等第一次读（watch / entries）才抛 `StorageRequestError: Unknown conversation: N`，
+被 hono 兜成 **500**。加上存在性校验后，已删会话的 id 在所有端点上都稳定回 404。
+
 ## 工具审批
 
 `beforeTool` hook **允许返回 Promise**，所以拦截是真的阻塞的 ——

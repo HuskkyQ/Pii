@@ -109,11 +109,16 @@ app.get("/api/image", async (c) => {
     return c.json({ error: "参数不全" }, 400);
   }
 
-  const found = await agent.storage.entry(
-    conversationId as never,
-    entryId as never,
-    BACKGROUND_CONTEXT,
-  );
+  /*
+   * 这里直接问存储，不走 resolveConversation —— 图片是热路径，少一次会话查询。
+   * 代价：会话已被删时 `storage.entry()` 会抛 StorageRequestError，必须自己兜成 404。
+   */
+  let found: Awaited<ReturnType<typeof agent.storage.entry>>;
+  try {
+    found = await agent.storage.entry(conversationId as never, entryId as never, BACKGROUND_CONTEXT);
+  } catch {
+    return c.json({ error: "条目不存在" }, 404);
+  }
   if (!found) return c.json({ error: "条目不存在" }, 404);
 
   const images: { data: string; mimeType: string }[] = [];

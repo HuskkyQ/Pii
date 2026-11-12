@@ -36,7 +36,8 @@ fi
 
 # ---------------------------------------------------------------- 2. 重建镜像
 say "2/6 构建镜像 pii:server"
-docker compose -f deploy/docker-compose.server.yml build
+# 统一走 build.sh：固定 BuildKit + 国内 apt 源，别在这里另写一份构建参数。
+bash deploy/build.sh pii:server
 
 # ---------------------------------------------------------------- 3. 切容器
 say "3/6 重启容器"

@@ -83,7 +83,7 @@ systemctl daemon-reload && systemctl enable --now caddy
 journalctl -u caddy -n 50 | grep -i "certificate obtained"
 ```
 
-## 两个非显然的坑（都踩过）
+## 四个非显然的坑（都踩过）
 
 ### 1. 阿里云内网 DNS 不可达 → ACME 直接失败
 
@@ -117,6 +117,18 @@ bind: address already in use    ← 80 被 teslamate-grafana 占着
 → Caddyfile 里 `auto_https disable_redirects` + `tls { issuer acme { disable_http_challenge } }`
 两条一起用，才能只靠 443 签发证书。
 
+### 4. 自更新部署器漏传 APT_MIRROR → 一次部署卡 43 分钟
+
+`docker history pii:server` 里 apt 层是 `APT_MIRROR=mirrors.aliyun.com` + BuildKit，
+但 `/usr/local/bin/pii-deploy` 原来跑的是**裸 `docker build`**（经典 builder +
+Dockerfile 的默认值 `deb.debian.org`）。参数一变，Docker 层缓存 key 全变；
+builder 不同，缓存本来也不共享。于是 apt 层、npm 层每次全部重跑，
+境外源实测 17KB/s，22MB 包拖了 **2622 秒**，而生产容器一直好好的没受影响。
+
+→ 两条部署路径现在都调 `deploy/build.sh`：固定 `DOCKER_BUILDKIT=1` +
+  `--build-arg APT_MIRROR=mirrors.aliyun.com`，配方和记事本只留一份。
+  换源只需 `APT_MIRROR=mirrors.tencent.com bash deploy/build.sh pii:candidate`。
+
 ## 自我更新（手机上让 pii 改自己）
 
 **设计原则：pii 不能自己执行 docker / 不能自己重启自己** —— 否则它写错一行代码就把自己搞死，而那时已经没人能修了。执行权留在宿主机。
@@ -142,7 +154,7 @@ bind: address already in use    ← 80 被 teslamate-grafana 占着
 四条安全线：**冒烟测试（用数据库副本另起一份）→ 生产库备份 → 健康检查 → 自动回滚**。
 任何一步失败，生产环境都不受影响或自动回到上一版。
 
-首次安装（宿主机上）：
+首次安装（宿主机上，在 `deploy/self-update/` 目录里）：
 
 ```bash
 install -m 0755 pii-deploy.sh    /usr/local/bin/pii-deploy
@@ -150,4 +162,12 @@ install -m 0644 pii-deploy.path  /etc/systemd/system/
 install -m 0644 pii-deploy.service /etc/systemd/system/
 mkdir -p /srv/pii-deploy
 systemctl daemon-reload && systemctl enable --now pii-deploy.path
+```
+
+**改了部署器脚本后必须重新 install**：`/usr/local/bin/pii-deploy` 是宿主机副本，
+不在 git 工作区里，`git pull` 不会更新它。从仓库根执行：
+
+```bash
+install -m 0755 deploy/self-update/pii-deploy.sh /usr/local/bin/pii-deploy
+diff -q deploy/self-update/pii-deploy.sh /usr/local/bin/pii-deploy   # 无输出 = 一致
 ```

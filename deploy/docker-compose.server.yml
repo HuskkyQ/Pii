@@ -1,7 +1,11 @@
 # deploy/docker-compose.server.yml —— 线上那台机器（阿里云 47.102.100.84）的真实配置
 #
 # 用法（在服务器上的仓库目录里）：
-#   docker compose -f deploy/docker-compose.server.yml up -d --build
+#   ./deploy/deploy.sh                                   # 一条命令部署
+#   docker compose -f deploy/docker-compose.server.yml up -d
+#
+# 镜像构建统一走 deploy/build.sh（固定 BuildKit + 国内 apt 源）；
+# 下面的 build.args 只是手动 `up -d --build` 时的兜底，值要和 build.sh 一致。
 #
 # 和根目录 docker-compose.yml 的区别：
 #   根目录那份是「一台机器全包」（Caddy 也跑容器里、占 80/443）

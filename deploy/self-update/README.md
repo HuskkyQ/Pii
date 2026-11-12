@@ -24,7 +24,7 @@
      → systemd pii-deploy.path 检测到文件
      → 宿主机执行 /usr/local/bin/pii-deploy：
           1) 把改动写成 /pii-deploy/last.diff（不提交）
-          2) docker build → pii:candidate
+          2) deploy/build.sh → pii:candidate（BuildKit + 国内 apt 源）
           3) 冒烟测试：数据库副本 + :18443 起一遍，manifest 必须 200
              ↳ 不通过就中止：生产零影响，git 历史也不留坏 commit
           4) 冒烟过了才 git commit

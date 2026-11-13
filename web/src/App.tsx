@@ -211,26 +211,54 @@ export default function App() {
    */
   const remove = useCallback(
     async (id: number) => {
-      const fallback = items.find((item) => item.id !== id);
-      if (id === currentId) {
-        if (fallback) select(fallback.id);
-        else {
-          const created = await create();
-          select(created);
+      try {
+        const fallback = items.find((item) => item.id !== id);
+        if (id === currentId) {
+          if (fallback) select(fallback.id);
+          else {
+            const created = await create();
+            select(created);
+          }
         }
-        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        /*
+         * 服务端在旧 SSE 还没断开时会 409（「先切到别的会话再删」）。
+         * 不要用固定 500ms 赌它断开：重试几次，每次只等 250ms。
+         * 「还有没跑完的任务」也是 409，但重试没用，直接提示。
+         */
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await deleteConversation(id);
+            break;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const stillWatched = message.startsWith("409") && message.includes("还开着");
+            if (!stillWatched || attempt >= 6) {
+              toast.error(message.replace(/^409\s*/, "") || "删除失败");
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        }
+        await refresh();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "删除失败");
       }
-      await deleteConversation(id);
-      await refresh();
     },
     [create, currentId, items, refresh, select],
   );
 
-  // 会话标题来自第一条用户消息 —— 发了第一句、或切了会话之后要重新问一遍服务端
+  // 会话标题来自第一条用户消息 —— 切会话立刻刷新；条目数变化（生成中）防抖后再刷
   const entryCount = snapshot?.entries.length ?? 0;
   useEffect(() => {
     void refresh();
-  }, [activeId, entryCount, refresh]);
+  }, [activeId, refresh]);
+
+  useEffect(() => {
+    if (entryCount === 0) return;
+    const timer = setTimeout(() => void refresh(), 400);
+    return () => clearTimeout(timer);
+  }, [entryCount, refresh]);
 
   return (
     <TooltipProvider delayDuration={250}>

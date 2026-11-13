@@ -84,7 +84,11 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
                     setPending(null);
                     if (!onDelete) return;
                     setDeleting(item.id);
-                    void onDelete(item.id).finally(() => setDeleting(null));
+                    void onDelete(item.id)
+                      .catch(() => {
+                        /* 错误提示已经在 App.remove 里做了，这里只负责收掉 loading */
+                      })
+                      .finally(() => setDeleting(null));
                   }}
                   className="shrink-0 rounded px-1.5 py-0.5 text-[12px] font-medium text-destructive hover:bg-destructive/15"
                 >

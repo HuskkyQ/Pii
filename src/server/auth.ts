@@ -9,7 +9,8 @@
  *   ① 令牌（最早的那套，行为完全不变）
  *      - 首次启动生成 32 字节随机令牌，落在 `<数据目录>/auth-token`（0600）
  *      - cookie 有效期 **一年**：机器生成的密钥有 256 位熵，泄露风险低，图省事
- *      - 也支持 `/?token=xxx` 链接（手机上点一次就进）
+ *      - `/?token=xxx` 只在 /login 生效（种完 cookie 立刻跳走）；
+ *        API/SSE 不再接受 query 令牌，避免令牌进访问日志和 Referer
  *
  *   ② 账号密码（额外配了 PII_USER + PII_PASS_HASH 才出现）
  *      - 密码只存 scrypt 哈希（`npm run hash-pass` 生成），明文永不落盘
@@ -153,16 +154,24 @@ export function createAuth(dataDir: string): Auth {
       const cookie = c.req.header("cookie") ?? "";
       for (const part of cookie.split(";")) {
         const [name, ...rest] = part.trim().split("=");
-        if (name === COOKIE) {
-          const value = decodeURIComponent(rest.join("="));
-          if (safeEqual(value, token)) return true;
-          break;
+        if (name !== COOKIE) continue;
+        try {
+          if (safeEqual(decodeURIComponent(rest.join("=")), token)) return true;
+        } catch {
+          /* 坏 cookie 当没有，继续看 Authorization —— 别让一个百分号把请求打成 500 */
         }
+        break;
       }
+      /*
+       * 只认 cookie 和 Bearer。
+       *
+       * 以前这里还接受任意路径的 `?token=`（EventSource 不能自定义头，所以当初留的口子）。
+       * 但 query 会进 Caddy 访问日志、浏览器历史和 Referer —— 令牌一旦落进日志，
+       * 等于把整个 agent 的钥匙留在磁盘上。EventSource 同源请求会自带 cookie，
+       * 不需要 query；脚本用 Bearer。
+       */
       const header = c.req.header("authorization");
-      if (header?.startsWith("Bearer ") && safeEqual(header.slice(7), token)) return true;
-      const query = c.req.query("token");
-      return query ? safeEqual(query, token) : false;
+      return header?.startsWith("Bearer ") ? safeEqual(header.slice(7), token) : false;
     },
 
     cookieFor(c: Context, maxAge: number = COOKIE_TTL_YEAR): string {

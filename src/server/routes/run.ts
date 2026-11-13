@@ -28,13 +28,58 @@ app.get("/api/stream", async (c) => {
     let closed = false;
     watch(scope, 1);
 
+    /*
+     * 写入必须串行，而且要有背压。
+     *
+     * 以前是 `void stream.writeSSE(...)`：客户端/代理变慢时，未完成的写入会在
+     * 内存里排队；快照虽然每 100ms 才一帧，但慢连接上仍然会越积越多。
+     *
+     * 现在用两条队列：
+     *   - pendingState：只保留最新一帧（快照是完整的，中间帧可以丢）
+     *   - eventQueue：审批/心跳这类小事件，按顺序发
+     * 同一时间只有一个 writeSSE 在飞；写完再取下一帧。
+     */
+    const MAX_EVENT_QUEUE = 100;
+    let pendingState: Snapshot | null = null;
+    let stateTimer: ReturnType<typeof setTimeout> | undefined;
+    let writing = false;
+    const eventQueue: { event: string; data: unknown }[] = [];
+
+    const drain = async (): Promise<void> => {
+      if (writing || closed) return;
+      writing = true;
+      try {
+        while (!closed) {
+          const nextEvent = eventQueue.shift();
+          if (nextEvent) {
+            await stream.writeSSE({
+              event: nextEvent.event,
+              data: JSON.stringify(nextEvent.data),
+            });
+            continue;
+          }
+          if (pendingState) {
+            const next = pendingState;
+            pendingState = null;
+            await stream.writeSSE({ event: "state", data: JSON.stringify(next) });
+            continue;
+          }
+          break;
+        }
+      } finally {
+        writing = false;
+      }
+    };
+
     const emit = (event: string, data: unknown) => {
       if (closed) return;
-      void Promise.resolve()
-        .then(() => stream.writeSSE({ event, data: JSON.stringify(data) }))
-        .catch(() => {
-          closed = true;
-        });
+      /*
+       * 队列满了说明客户端长时间不读。丢掉新事件，别让内存一直涨：
+       * 审批事件在客户端重连时会由 `approvals.list(scope)` 补发，不会丢。
+       */
+      if (eventQueue.length >= MAX_EVENT_QUEUE) return;
+      eventQueue.push({ event, data });
+      void drain();
     };
 
     /*
@@ -47,29 +92,24 @@ app.get("/api/stream", async (c) => {
      * 做法：最多每 100ms 推一帧，中间的合并成最后一帧（trailing edge）。
      * 丢中间的帧不会丢信息 —— 因为下一帧是完整快照，不是增量。
      */
-    let pending: Snapshot | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const flush = () => {
-      timer = undefined;
-      if (!pending) return;
-      const next = pending;
-      pending = null;
-      emit("state", next);
-    };
-
-    const pushSnapshot = (snapshot: Snapshot) => {
-      const waiting = timer !== undefined;
-      pending = snapshot;
-      if (waiting) return; // 已经在队列里了，等它到点一起发
-      timer = setTimeout(flush, 100);
-      timer.unref?.();
+    const pushSnapshot = (snapshot: Snapshot, immediate = false) => {
+      pendingState = snapshot;
+      if (stateTimer !== undefined) return; // 已经有一帧在排队，替换内容即可
+      if (immediate) {
+        void drain();
+        return;
+      }
+      stateTimer = setTimeout(() => {
+        stateTimer = undefined;
+        void drain();
+      }, 100);
+      stateTimer.unref?.();
     };
 
     {
       // `value` 在 start 之前就是「挂载那一刻的视图」，正好当首帧。
       const options = windowOptions({ turns: c.req.query("turns") });
-      pushSnapshot(projectView(view.value, options));
+      pushSnapshot(projectView(view.value, options), true);
     }
 
     // 重连时把仍挂起的审批补发一次，否则新开的标签页看不到它们；
@@ -97,8 +137,10 @@ app.get("/api/stream", async (c) => {
       stream.onAbort(() => {
         closed = true;
         watch(scope, -1);
-        if (timer) clearTimeout(timer);
+        if (stateTimer) clearTimeout(stateTimer);
         clearInterval(heartbeat);
+        eventQueue.length = 0;
+        pendingState = null;
         void view.stop();
         offRequest();
         offOutcome();

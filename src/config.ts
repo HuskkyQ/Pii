@@ -47,6 +47,8 @@ export interface PiiConfig {
   viewEntries: number;
   /** 注意：`policies.ts` 和 `approvals.ts` 对 undefined 的解释**不同**，别合并默认值。 */
   autoAllowEnv: string | undefined;
+  /** 一次工具审批最多挂多久；默认 120 秒，超时按拒绝处理（fail-closed）。 */
+  approvalTimeoutMs: number;
   pushEnabled: boolean;
   vapidSubject: string;
   /** 「要求开鉴权」；实际是否启用还要看 `tokenEnv`，组合逻辑留在 `auth.ts`。 */
@@ -84,6 +86,7 @@ export function loadConfig(): PiiConfig {
     snapshotTurns: Number(process.env.PII_SNAPSHOT_TURNS ?? 5),
     viewEntries: Number(process.env.PII_VIEW_ENTRIES ?? 2000),
     autoAllowEnv: process.env.PII_AUTO_ALLOW,
+    approvalTimeoutMs: Number(process.env.PII_APPROVAL_TIMEOUT_MS ?? 120_000),
     pushEnabled: process.env.PII_PUSH !== "0",
     vapidSubject: process.env.PII_VAPID_SUBJECT ?? "mailto:pii@localhost",
     authRequested: process.env.PII_AUTH === "1",

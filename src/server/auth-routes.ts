@@ -76,7 +76,7 @@ function clientIp(c: Context): string {
  * `Location: //evil.example` 会让浏览器跳到外站（协议相对 URL）。
  * 反斜杠在部分浏览器里等价于斜杠，所以 `/\evil.example` 也要拦。
  */
-function safeNext(value: unknown): string {
+export function safeNext(value: unknown): string {
   if (typeof value !== "string") return "/";
   const v = value.trim();
   if (!v.startsWith("/")) return "/";

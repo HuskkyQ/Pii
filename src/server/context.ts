@@ -36,8 +36,13 @@ const WEB_DIST = fileURLToPath(new URL("../../web/dist", import.meta.url));
 
 const startedAt = Date.now();
 
-/** 本文件所在目录 = 原 main.ts 所在目录，供 /api/build 扫 .ts 判断「要不要重启」。 */
-const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
+/**
+ * src/ 根目录：/api/build 扫全部 .ts 判断「要不要重启」。
+ *
+ * 不能只扫 `server/`：改 `agent.ts`、`tools/`、`config.ts` 同样需要重启，
+ * 以前只扫 `src/server` 会让这些改动被误判成「不用重启」。
+ */
+const SOURCE_DIR = fileURLToPath(new URL("..", import.meta.url));
 
 /**
  * 快照窗口参数。durationOf 由调用方注入，避免这里反向依赖 createContext 内部状态。
@@ -87,8 +92,8 @@ export interface AppContext {
   newestMtime: (dir: string) => number;
   taskDuration: (taskId: number) => number | undefined;
   latestFailure: (conversationId: number) => RunFailure | null;
-  /** /api/build 扫源码的基准目录（搬走路由后不能再用 import.meta.url，否则只扫到 routes/）。 */
-  serverDir: string;
+  /** /api/build 扫源码的基准目录（`src/`，含 agent/tools/config 等全部源码）。 */
+  sourceDir: string;
   archiveDir: string;
   clientMetrics: unknown[];
   /** 值类型的共享标记必须包成对象：解构成副本会让 /api/restart 的去重判断失效。 */
@@ -153,6 +158,7 @@ export async function createContext(): Promise<AppContext> {
   /** 上次在看的会话（前端 localStorage 的兜底）。 */
   const lastConversation = new LastConversation(dataDir);
   const approvals = new ApprovalBroker({
+    timeoutMs: config.approvalTimeoutMs,
     shouldAutoAllow: (conversationId, tool) => policies.shouldAutoAllow(conversationId, tool),
   });
 
@@ -379,7 +385,7 @@ export async function createContext(): Promise<AppContext> {
   }
 
   return {
-    serverDir: SERVER_DIR,
+    sourceDir: SOURCE_DIR,
     archiveDir,
     clientMetrics,
     flags,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { approve as apiApprove, fetchOlderEntries, markFirstState, subscribe } from "@/lib/api";
 import type { ApprovalRequest, ConnectionState, Entry, Snapshot } from "@/lib/types";
@@ -16,6 +17,14 @@ import type { ApprovalRequest, ConnectionState, Entry, Snapshot } from "@/lib/ty
  */
 const CACHE_PREFIX = "pii:snapshot:";
 const CACHE_MAX_BYTES = 400_000;
+/**
+ * 快照缓存最多每秒写一次。
+ *
+ * 流式时服务端每 100ms 推一帧，帧内是完整快照；如果每帧都 JSON.stringify +
+ * localStorage.setItem，长会话会把主线程和存储都拖慢。缓存旧一秒完全可以接受
+ * （它本来就是「先画上一份」的降级路径）。
+ */
+const CACHE_WRITE_INTERVAL_MS = 1000;
 
 function readCachedSnapshot(conversationId: number | undefined): Snapshot | null {
   if (conversationId === undefined) return null;
@@ -67,6 +76,11 @@ export function usePii(conversationId?: number): PiiStore {
   const [olderHasMore, setOlderHasMore] = useState<boolean | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const seen = useRef(new Set<string>());
+  /** loadOlder 的同步锁：state 在同一帧里还没更新，光靠 loadingOlder 会重复发请求 */
+  const loadingOlderRef = useRef(false);
+  /** 切会话后，旧的翻页响应不许再落到新会话里 */
+  const loadSeq = useRef(0);
+  const lastCacheWrite = useRef(0);
 
   useEffect(() => {
     // 切会话先清场：标题、transcript、审批都换人
@@ -77,6 +91,10 @@ export function usePii(conversationId?: number): PiiStore {
     setOlder([]);
     setOlderHasMore(null);
     seen.current = new Set();
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    loadSeq.current += 1;
+    lastCacheWrite.current = 0;
 
     const stop = subscribe(
       {
@@ -86,7 +104,11 @@ export function usePii(conversationId?: number): PiiStore {
           if (conversationId !== undefined && next.conversationId !== conversationId) return;
           markFirstState();
           setSnapshot(next);
-          writeCachedSnapshot(next);
+          const now = Date.now();
+          if (now - lastCacheWrite.current >= CACHE_WRITE_INTERVAL_MS) {
+            lastCacheWrite.current = now;
+            writeCachedSnapshot(next);
+          }
         },
         onApproval: (value) => {
           const request = value as ApprovalRequest;
@@ -107,14 +129,27 @@ export function usePii(conversationId?: number): PiiStore {
     return stop;
   }, [conversationId]);
 
-  const approve = useCallback(async (id: string, allow: boolean) => {
-    // 先本地移除，避免连点；失败也不影响（服务端会推 resolved 事件兜底）
-    seen.current.delete(id);
-    setApprovals((prev) => prev.filter((item) => item.id !== id));
-    await apiApprove(id, allow).catch(() => {
-      /* 超时或已答过，服务端返回 409，不需要打扰用户 */
-    });
-  }, []);
+  const approve = useCallback(
+    async (id: string, allow: boolean) => {
+      // 先本地移除，避免连点
+      const request = approvals.find((item) => item.id === id);
+      seen.current.delete(id);
+      setApprovals((prev) => prev.filter((item) => item.id !== id));
+      try {
+        await apiApprove(id, allow);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        // 409 = 已经超时/答过，卡片本来就该消失；其它错误把卡片放回去，允许重试
+        if (!message.startsWith("409")) {
+          if (request) {
+            setApprovals((prev) => (prev.some((item) => item.id === id) ? prev : [...prev, request]));
+          }
+          toast.error("审批提交失败，请重试");
+        }
+      }
+    },
+    [approvals],
+  );
 
   /**
    * 往前翻一页。
@@ -124,10 +159,14 @@ export function usePii(conversationId?: number): PiiStore {
    */
   const loadOlder = useCallback(async () => {
     const cursor = older[0]?.id ?? snapshot?.oldestEntryId ?? undefined;
-    if (cursor === undefined || cursor === null || loadingOlder) return;
+    if (cursor === undefined || cursor === null || loadingOlderRef.current) return;
+    const seq = ++loadSeq.current;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
       const page = await fetchOlderEntries(conversationId, cursor);
+      // 已经切到别的会话了：旧响应不许拼进新会话
+      if (seq !== loadSeq.current) return;
       const rows = (page.entries ?? []) as Entry[];
       setOlder((prev) => {
         const seenIds = new Set(rows.map((row) => row.id));
@@ -137,9 +176,13 @@ export function usePii(conversationId?: number): PiiStore {
     } catch {
       /* 翻页失败不打扰用户，按钮还能再点 */
     } finally {
-      setLoadingOlder(false);
+      // 被切会话作废的请求不要动新一轮的 loading 状态
+      if (seq === loadSeq.current) {
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      }
     }
-  }, [conversationId, loadingOlder, older, snapshot?.oldestEntryId]);
+  }, [conversationId, older, snapshot?.oldestEntryId]);
 
   const hasMore = older.length > 0 ? (olderHasMore ?? false) : (snapshot?.hasMore ?? false);
 

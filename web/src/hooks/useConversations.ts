@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createConversation, listConversations } from "@/lib/api";
 import type { ConversationSummary } from "@/lib/types";
@@ -20,10 +20,14 @@ export interface ConversationsStore {
 export function useConversations(): ConversationsStore {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [creating, setCreating] = useState(false);
+  /** 请求序号：重叠的刷新只让最新一次落地，避免旧列表覆盖新列表 */
+  const seq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mine = ++seq.current;
     try {
-      setItems(await listConversations());
+      const next = await listConversations();
+      if (mine === seq.current) setItems(next);
     } catch {
       /* 服务刚起或网断了，保留上一份列表，下次再刷 */
     }

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { AppContext } from "../context.ts";
 
 export function registerOps(app: Hono, ctx: AppContext): void {
-  const { clientMetrics, flags, shutdown, newestMtime, serverDir, startedAt, webDist: WEB_DIST } = ctx;
+  const { clientMetrics, flags, shutdown, newestMtime, sourceDir, startedAt, webDist: WEB_DIST } = ctx;
 
 /**
  * 客户端自报尺寸。真机布局问题（安全区、视口高度）在 headless 里量不到，
@@ -63,7 +63,7 @@ app.post("/api/restart", async (c) => {
 
 /** 运行中的这版代码是什么时候改的（用来判断“要不要重启才生效”）。 */
 app.get("/api/build", (c) => {
-  const stamp = newestMtime(serverDir);
+  const stamp = newestMtime(sourceDir);
 
   // 前端资源指纹 + service worker 版本：排查「手机上是不是旧版」时一眼能看出来
   let assets: string[] = [];

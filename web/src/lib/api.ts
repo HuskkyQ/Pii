@@ -136,7 +136,8 @@ export function deleteConversation(id: number) {
   return fetch(`/api/conversations/${id}`, { method: "DELETE" }).then(async (res) => {
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? `${res.status}`);
+      // 带上状态码：调用方要区分 409（还有人开着/任务没跑完）和真正的失败
+      throw new Error(`${res.status} ${body.error ?? ""}`.trim());
     }
     return (await res.json()) as { ok: boolean; deletedRows: boolean };
   });

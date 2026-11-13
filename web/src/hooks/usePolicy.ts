@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getPolicy, setPolicy } from "@/lib/api";
 import type { PresetId, ToolPolicy } from "@/lib/types";
@@ -19,10 +19,14 @@ export interface PolicyStore {
 export function usePolicy(conversationId?: number): PolicyStore {
   const [policy, setLocalPolicy] = useState<ToolPolicy | null>(null);
   const [preset, setPreset] = useState<PresetId | null>(null);
+  /** 请求序号：切会话/连续刷新时，只让最新一次响应落地 */
+  const seq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const data = await getPolicy(conversationId);
+      if (mine !== seq.current) return;
       setLocalPolicy(data.policy);
       setPreset(data.preset);
     } catch {
@@ -36,7 +40,9 @@ export function usePolicy(conversationId?: number): PolicyStore {
 
   const update = useCallback(
     async (next: ToolPolicy) => {
+      const mine = ++seq.current;
       const data = await setPolicy(next, conversationId);
+      if (mine !== seq.current) return;
       setLocalPolicy(data.policy);
       setPreset(data.preset);
     },

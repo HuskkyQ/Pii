@@ -30,8 +30,9 @@ src/
 │   ├── image-ref.ts   图片 base64 → 落盘 + 文本标记（省 token）
 │   └── notify.ts      GenerationTask.onYield → 「回答完成」推一条
 └── server/
-    ├── main.ts        Hono: HTTP + SSE + 静态托管 + pid 锁
+    ├── main.ts       启动：建 app、按序注册路由、listen、信号处理（不含业务逻辑）
     ├── context.ts     组合根：按顺序接线 + 启动日志（不含环境变量解析，也不内嵌 SQL）
+    ├── auth-routes.ts /login、/logout、鉴权中间件、登录失败限速
     ├── db/
     │   ├── lock.ts    进程锁（主机名:pid，防容器重建撞号）
     │   └── tasks.ts   tasks 表只读查询（生成耗时 / 最近一次失败）
@@ -105,6 +106,8 @@ npm run dev:web                          # 终端 B：Vite :5173，/api 代理�
 | `PII_MODEL` | `workbuddy/deepseek-v4.1-flash` | 同上 |
 | `PII_TOOLS` | 开 | `0` 关闭 read/write/edit/bash |
 | `PII_AUTO_ALLOW` | `read` | **默认**审批策略：逗号分隔的工具名，设空=全问，含 `*`=全部放行。仅当会话没在界面上单独配过时生效（界面按会话可覆盖） |
+| `PII_APPROVAL_TIMEOUT_MS` | `120000` | 一次工具审批最多挂多久；超时按**拒绝**处理（fail-closed）。人不在手机旁时可以调大 |
+| `PII_SNAPSHOT_TURNS` | `5` | 每帧快照带最近几**轮**对话（一轮 = 用户 + 助手）；更早的用 `?before` 翻 |
 | `PII_THINKING` | 不设 | 设成 `low`/`medium`/`high` 才会出现思考块 |
 | `PII_PUSH` | 开 | `0` 关闭推送（不生成密钥、不发送） |
 | `PII_VAPID_SUBJECT` | `mailto:pii@localhost` | VAPID 的联络人；部分推送服务会校验 |
@@ -346,7 +349,7 @@ VAPID 密钥对（~/.pii/vapid.json，首次启动生成，0600）
 
 | 触发点 | 在哪 | 文案 |
 |---|---|---|
-| 有人要你点头 | `main.ts` 里的 `approvals.onRequest` | `bash: {"command":"…"}` |
+| 有人要你点头 | `context.ts` 里的 `approvals.onRequest` | `bash: {"command":"…"}` |
 | 回答跑完了 | `tools/notify.ts` 挂 `GenerationTask.onYield` | 回答前 120 字 |
 
 两个刻意的设计：
@@ -421,7 +424,7 @@ caffeinate -s   接着电源时阻止系统睡眠
 ```text
 1. 底部 📁 chip → 选到项目目录（agent 的 bash/read/edit 都相对它解析）
 2. 底部绿点 chip → 选模型（大改动选强的，小修小补选快的）
-3. 说清楚改哪里：「src/server/main.ts 里的审批超时从 120 秒改成 300 秒」
+3. 说清楚改哪里：「审批超时（`PII_APPROVAL_TIMEOUT_MS`）从 120 秒改成 300 秒」
 4. 审批卡片会逐个弹出来（edit / write / bash）—— 点允许前看一眼改的是什么
 ```
 
@@ -636,7 +639,11 @@ docker compose logs -f pii
 |---|---|---|---|
 | 令牌 | `PII_TOKEN` 或 `data/auth-token`（32 字节随机） | **一年** | 机器生成的 256 位密钥猜不出来，图省事 |
 | 账号密码 | `PII_USER` + `PII_PASS_HASH` | **七天** | 人定的密码熵低，短一点更稳 |
-| `/?token=xxx` 链接 | 同上令牌 | 一年 | 手机上点一次就进（magic link） |
+| `/login?token=xxx` 链接 | 同上令牌 | 一年 | 手机上点一次就进（magic link）；**只有这一条路径认 query token**，其余 `/api/*` 只认 cookie 和 `Authorization` |
+
+> query token 只留给 magic link：URL 会进访问日志和浏览器历史，不能当长期凭据用。
+> 曾经 `/?token=xxx` 也能直接放行，现已收紧 —— 这类链接要写成 `/login?token=xxx`，
+> 它会种好 cookie 再跳回首页。
 
 ### 退出登录
 
@@ -693,7 +700,7 @@ docker compose -f deploy/docker-compose.server.yml up -d
 哈希格式 `scrypt$<salt>$<hash>`，参数 N=16384/r=8/p=1，校验端在 `src/server/auth.ts`，
 用的是 `node:crypto` 自带的 scrypt（不引 bcrypt，少一个依赖）。
 
-**失败限速**（`src/server/main.ts` 的 `POST /login`）：按客户端 IP 记账，与令牌/密码共用一套计数。
+**失败限速**（`src/server/auth-routes.ts` 的 `POST /login`）：按客户端 IP 记账，与令牌/密码共用一套计数。
 
 | 第几次失败 | 行为 |
 |---|---|
@@ -739,9 +746,9 @@ Node 版本必须 ≥ 22.19（`node:sqlite` 需要）。我在 `node:22-alpine`�
 | 改动 | 做法 | 效果 |
 |---|---|---|
 | **图片移出快照** | 快照里只放 `/api/image?c=&e=&i=`，图片单独端点 + `immutable` 缓存 | 2.4MB → 1.6MB；第二次看同图 0 请求 |
-| **快照窗口化** | 默认只发最近 **20** 条（`PII_SNAPSHOT_LIMIT` 可调），`?before=<id>` 往前翻 | 1.6MB → 63KB |
+| **快照窗口化** | 默认只发最近 **5 轮**（`PII_SNAPSHOT_TURNS` 可调），`?before=<id>` 往前翻 | 1.6MB → 63KB（当时按 20 条测得） |
 | **gzip** | `hono/compress`（自动跳过 SSE） | 63KB → 23KB |
-| **SSE 节流** | 最多每 250ms 一帧，中间帧合并（丢的是旧快照，不是增量） | 生成时帧数降一个数量级 |
+| **SSE 节流** | 最多每 100ms 一帧，中间帧合并（丢的是旧快照，不是增量） | 生成时帧数降一个数量级 |
 
 ### 首屏：三层加速（白屏 3~4 秒的元凶在这里）
 

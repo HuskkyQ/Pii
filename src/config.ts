@@ -56,6 +56,10 @@ export interface PiiConfig {
   passHash: string;
   tokenHintEnv: string;
   keepAwake: boolean;
+  /** SIGINT/SIGTERM 后最多等多久让正在跑的会话结束；0 = 立刻退。 */
+  shutdownIdleMs: number;
+  /** 停止接受新连接后，给已有连接（含长连 SSE）收尾的窗口，超时硬断。 */
+  shutdownGraceMs: number;
 }
 
 export function loadConfig(): PiiConfig {
@@ -88,6 +92,10 @@ export function loadConfig(): PiiConfig {
     passHash: (process.env.PII_PASS_HASH ?? "").trim(),
     tokenHintEnv: (process.env.PII_TOKEN_HINT ?? "").trim(),
     keepAwake: process.env.PII_KEEP_AWAKE !== "0",
+    // 这两个和编排的 stop_grace_period 是一套账：idle + grace 必须小于它，
+    // 否则 docker 会在我们还在收尾时直接 SIGKILL。见 deploy/docker-compose.server.yml。
+    shutdownIdleMs: Number(process.env.PII_SHUTDOWN_IDLE_MS ?? 10_000),
+    shutdownGraceMs: Number(process.env.PII_SHUTDOWN_GRACE_MS ?? 3_000),
   };
 }
 

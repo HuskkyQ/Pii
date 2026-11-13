@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { AppContext } from "../context.ts";
 
 export function registerOps(app: Hono, ctx: AppContext): void {
-  const { clientMetrics, flags, isIdle, shutdown, newestMtime, serverDir, startedAt, webDist: WEB_DIST } = ctx;
+  const { clientMetrics, flags, shutdown, newestMtime, serverDir, startedAt, webDist: WEB_DIST } = ctx;
 
 /**
  * 客户端自报尺寸。真机布局问题（安全区、视口高度）在 headless 里量不到，
@@ -46,31 +46,17 @@ app.post("/api/restart", async (c) => {
   if (flags.restartPending) return c.json({ ok: true, state: "already-pending" });
 
   if (force) {
-    console.log("\n收到重启请求（force），立刻重启…");
-    setTimeout(() => void shutdown("restart"), 200);
+    // 等 200ms 是为了让这个响应先写出去，否则浏览器拿到的是连接被重置
+    setTimeout(() => void shutdown("restart", { waitForIdleMs: 0 }), 200);
     return c.json({ ok: true, state: "restarting-now" });
   }
 
   flags.restartPending = true;
   console.log("\n收到重启请求，等空闲后重启…");
 
-  void (async () => {
-    // 最多等 10 分钟，超时也重启（否则一个卡住的任务能把这个标记带一辈子）
-    for (let i = 0; i < 600; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      try {
-        if (await isIdle()) {
-          console.log("已空闲，重启中…");
-          await shutdown("restart");
-          return;
-        }
-      } catch {
-        /* 读失败就当还在忙 */
-      }
-    }
-    console.log("等空闲超时，强制重启…");
-    await shutdown("restart");
-  })();
+  // 等空闲的逻辑在 ctx.shutdown 里，和 SIGTERM 共用一份（以前这里是另一份手写循环）。
+  // 最多等 10 分钟，超时也重启 —— 否则一个卡住的任务能把这个标记带一辈子。
+  void shutdown("restart", { waitForIdleMs: 10 * 60_000 });
 
   return c.json({ ok: true, state: "waiting-for-idle" });
 });

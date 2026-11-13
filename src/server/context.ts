@@ -101,9 +101,24 @@ export interface AppContext {
   resolveConversation: (id: number | undefined) => Promise<Conversation | undefined>;
   isIdle: () => Promise<boolean>;
   /** main.ts 创建 HTTP server 后交进来（ctx 创建时它还不存在）。 */
-  attachServer: (server: { close: () => void }) => void;
-  /** 优雅退出：/api/restart 与 SIGINT/SIGTERM 共用同一条路径。 */
-  shutdown: (reason: string) => Promise<void>;
+  attachServer: (server: ClosableServer) => void;
+  /**
+   * 优雅退出：/api/restart 与 SIGINT/SIGTERM 共用同一条路径。
+   * `waitForIdleMs` 不传则用 config.shutdownIdleMs；传 0 = 不等，立刻退。
+   */
+  shutdown: (reason: string, options?: { waitForIdleMs?: number; exitCode?: number }) => Promise<void>;
+}
+
+/**
+ * 我们只用到 node http server 的这三个方法，所以按结构类型收窄，
+ * 不把 `@hono/node-server` 的具体类型拖进 ctx。
+ */
+export interface ClosableServer {
+  close: (callback?: (error?: Error) => void) => unknown;
+  /** keep-alive 的空闲连接，先收掉，省得白占满整个收尾窗口。 */
+  closeIdleConnections?: () => void;
+  /** 收尾窗口到期后的硬断（SSE 是长连接，不硬断的话 close() 永远不返回）。 */
+  closeAllConnections?: () => void;
 }
 
 
@@ -217,7 +232,7 @@ export async function createContext(): Promise<AppContext> {
   );
 
   /* 生成耗时 / 最近一次失败：都在 db/tasks.ts（惰性只读连接 + duration 缓存）。 */
-  const { taskDuration, latestFailure } = openTaskQueries(agent.dbPath);
+  const { taskDuration, latestFailure, close: closeTaskQueries } = openTaskQueries(agent.dbPath);
 
   /** 以下定义原本散落在 main.ts 的路由之间，现收进 ctx 供多个模块共用。 */
   /** 归档目录：`PII_ARCHIVE_DIR` → `<数据目录>/archive`（解析在 config.ts）。 */
@@ -249,18 +264,118 @@ export async function createContext(): Promise<AppContext> {
 
   // 优雅退出原本是 main.ts 的局部函数，但 /api/restart 也要调它，
   // 所以收进 ctx；server 由 main.ts 在 listen 之后通过 attachServer 交进来。
-  let server: { close: () => void } | null = null;
-  function attachServer(s: { close: () => void }): void {
+  let server: ClosableServer | null = null;
+  function attachServer(s: ClosableServer): void {
     server = s;
   }
-  async function shutdown(reason: string): Promise<void> {
-    console.log(`\n收到 ${reason}，关闭中…`);
-    server?.close();
+
+  /**
+   * 等所有会话空闲，最多 `timeoutMs`。返回 true = 真的空了。
+   *
+   * 为什么不能省这一步：正在生成的回答被腰斩后，重启时 pi-durable 会从 checkpoint
+   * 续跑，而 checkpoint 里可能正躺着「执行 restart」这条命令 —— 于是重启完又把
+   * 自己重启一遍，变成重启环。`/api/restart` 一直守着这条，信号处理也得守。
+   */
+  async function waitForIdle(timeoutMs: number): Promise<boolean> {
+    const until = Date.now() + timeoutMs;
+    let announced = false;
+    while (Date.now() < until) {
+      try {
+        if (await isIdle()) return true;
+      } catch {
+        /* 读失败就当还在忙 */
+      }
+      if (!announced) {
+        console.log(`  还有任务在跑，等它结束再退（最多 ${Math.round(timeoutMs / 1000)} 秒）`);
+        announced = true;
+      }
+      // 500ms 一轮：既能及时退，又不会把事件循环占满
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  }
+
+  /**
+   * 停止接受新连接，并给已有连接一个收尾窗口。
+   *
+   * 直接 `server.close()` 然后 exit 会把所有 SSE 一刀切断；只 `close()` 不 exit
+   * 又会永远等下去（EventSource 的长连接不会自己结束）。所以两头都要：
+   * 先 close（不再接新连接）+ 收掉空闲连接，再在窗口到期后硬断剩下的。
+   */
+  async function closeServer(graceMs: number): Promise<void> {
+    const s = server;
+    if (!s) return;
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try {
+          s.closeAllConnections?.();
+        } catch {
+          /* 断不掉也只能作罢，后面还有 process.exit */
+        }
+        finish();
+      }, graceMs);
+      try {
+        s.close(() => finish());
+        s.closeIdleConnections?.();
+      } catch {
+        finish();
+      }
+    });
+  }
+
+  /**
+   * 真正的关停流程。顺序不能乱：
+   *   ① 等空闲（可选）→ ② 停接新连接、给老连接收尾 → ③ 处置审批、停防休眠
+   *   → ④ 关 harness → ⑤ 关只读 SQLite → ⑥ 删进程锁 → exit
+   *
+   * ⑤ 在 ⑥ 之前：锁没了别的进程就能进来，这时还攥着库句柄就是脏读的来源。
+   */
+  async function doShutdown(
+    reason: string,
+    options: { waitForIdleMs?: number; exitCode?: number },
+  ): Promise<void> {
+    const idleMs = options.waitForIdleMs ?? config.shutdownIdleMs;
+    console.log(`\n收到 ${reason}，开始关闭…`);
+
+    if (idleMs > 0 && !(await waitForIdle(idleMs))) {
+      console.log("  等空闲超时，仍然退出（进度留在 checkpoint 里）");
+    }
+
+    await closeServer(config.shutdownGraceMs);
+
     approvals.dispose();
     awake.stop();
-    await agent.harness.close(BACKGROUND_CONTEXT);
+    try {
+      await agent.harness.close(BACKGROUND_CONTEXT);
+    } catch (error) {
+      // 关不掉也要继续走完：锁不释放、只读句柄不关，下次启动更麻烦
+      console.error("  关闭 harness 失败（继续退出）:", error);
+    }
+    closeTaskQueries();
     releaseLock();
-    process.exit(0);
+    console.log(`  已退出（${reason}）`);
+    // 正常关停 = 0；因未捕获异常而关停 = 非 0，让编排/日志能区分「我要求它退」和「它自己崩了」
+    process.exit(options.exitCode ?? 0);
+  }
+
+  /**
+   * 幂等：`/api/restart` 排队的关停和随后到达的 SIGTERM 可能前后脚触发，
+   * 只应该跑一次（第二次调用拿到的是同一个 Promise）。
+   */
+  let shuttingDown: Promise<void> | null = null;
+  function shutdown(
+    reason: string,
+    options: { waitForIdleMs?: number; exitCode?: number } = {},
+  ): Promise<void> {
+    shuttingDown ??= doShutdown(reason, options);
+    return shuttingDown;
   }
 
   return {

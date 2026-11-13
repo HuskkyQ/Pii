@@ -25,6 +25,8 @@ export interface RunFailure {
 export interface TaskQueries {
   taskDuration: (taskId: number) => number | undefined;
   latestFailure: (conversationId: number) => RunFailure | null;
+  /** 退出前关掉惰性打开的只读连接（没打开过就是空操作）。 */
+  close: () => void;
 }
 
 export function openTaskQueries(dbPath: string): TaskQueries {
@@ -98,5 +100,14 @@ export function openTaskQueries(dbPath: string): TaskQueries {
     }
   }
 
-  return { taskDuration, latestFailure };
+  function close(): void {
+    try {
+      db?.close();
+    } catch {
+      /* 关不上也别在退出路上抛异常 */
+    }
+    db = null;
+  }
+
+  return { taskDuration, latestFailure, close };
 }

@@ -14,7 +14,7 @@
     "build:web": "npm --prefix web run build",
     "build": "npm --prefix web run build",
     "check": "tsc --noEmit && npm --prefix web run build",
-    "test": "tsx --test web/tests/picker-position.test.ts web/tests/process-steps.test.ts tests/server.test.ts",
+    "test": "tsx --test web/tests/picker-position.test.ts web/tests/process-steps.test.ts tests/server.test.ts tests/memory.test.ts",
     "shot": "node scripts/shot.mjs",
     "hash-pass": "node scripts/hash-password.mjs",
     "pwa:check": "node scripts/pwa-check.mjs",

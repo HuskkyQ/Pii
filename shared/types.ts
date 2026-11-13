@@ -110,6 +110,25 @@ export interface ApprovalRequest {
   expiresAt: number;
 }
 
+/**
+ * 全局共享记忆的一条。
+ *
+ * 和 `Entry` 的区别：Entry 是「发生过什么」，只增不改、会被压缩；
+ * MemoryEntry 是「一直成立的事实」，可编辑，每轮请求前注入系统提示。
+ */
+export interface MemoryEntry {
+  id: number;
+  content: string;
+  tags: string[];
+  pinned: boolean;
+  /** 谁写的：人（manual）还是 agent（agent，写入要审批） */
+  source: "manual" | "agent";
+  /** agent 写入时来自哪个会话（审计用；会话删了也不影响这条记忆） */
+  conversationId?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** `listConversations()` 的投影。标题来自第一条用户消息，不是落库字段。 */
 export interface ConversationSummary {
   id: number;

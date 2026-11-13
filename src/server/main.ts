@@ -17,6 +17,7 @@ import { createContext, type AppContext } from "./context.ts";
 import { registerAuth } from "./auth-routes.ts";
 import { registerStatic } from "./static.ts";
 import { registerArchive } from "./routes/archive.ts";
+import { registerMemory } from "./routes/memory.ts";
 import { registerModels } from "./routes/models.ts";
 import { registerOps } from "./routes/ops.ts";
 import { registerPush } from "./routes/push.ts";
@@ -75,6 +76,7 @@ registerModels(app, ctx);
 registerPush(app, ctx);
 registerWorkspace(app, ctx);
 registerArchive(app, ctx);
+registerMemory(app, ctx);
 registerSession(app, ctx);
 registerRun(app, ctx);
 

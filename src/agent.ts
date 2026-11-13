@@ -17,6 +17,8 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 
 import { loadModels } from "./provider.ts";
 import { loadConfig, resolveArchiveDir, resolveCwd, resolveDataDir } from "./config.ts";
+import type { MemoryStore } from "./memory/store.ts";
+import { memoryExtension } from "./memory/section.ts";
 import type { ApprovalPort, PushPort } from "./ports.ts";
 import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
@@ -42,6 +44,8 @@ export interface AgentOptions {
   archiveDir?: string;
   /** 思考等级；不传沿用会话里已存的值。 */
   thinkingLevel?: string;
+  /** 全局共享记忆。传了就装一个 `memory` system section（每轮请求前渲染）。 */
+  memory?: MemoryStore;
 }
 
 export interface Agent {
@@ -101,6 +105,8 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
       }),
     );
   }
+  // 全局记忆：不进对话条目，每轮请求前作为 system section 渲染
+  if (options.memory) registry.install(memoryExtension(options.memory));
   // 归档：上下文被压缩之前，先把被替换的原文落盘（只增不改）
   registry.install(
     archiveExtension({

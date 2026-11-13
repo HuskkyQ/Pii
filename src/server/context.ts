@@ -19,6 +19,7 @@ import type { Conversation } from "@earendil-works/pi-durable";
 import type { Agent } from "../agent.ts";
 import { openAgent } from "../agent.ts";
 import { loadConfig, resolveArchiveDir, resolveDataDir } from "../config.ts";
+import { MemoryStore } from "../memory/store.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
 import { openConversation } from "./conversations.ts";
 import { createAuth, type Auth } from "./auth.ts";
@@ -76,6 +77,8 @@ export interface AppContext {
   dataDir: string;
   releaseLock: () => void;
   policies: Policies;
+  /** 全局共享记忆（跨会话）。表在 agent.sqlite 里，与 pi-durable 共存。 */
+  memory: MemoryStore;
   lastConversation: LastConversation;
   approvals: ApprovalBroker;
   watching: Map<number, number>;
@@ -153,6 +156,11 @@ export async function createContext(): Promise<AppContext> {
   const config = loadConfig();
   const dataDir = resolveDataDir();
   const releaseLock = acquireLock(dataDir);
+  /**
+   * 全局记忆：自己开一条连接（和 Trash / taskQueries 一样），在 agent 打开前建表。
+   * 先建表再 openAgent 是有意的：Harness 的 migrations 只认自己的表，多一张 `pii_` 表不影响它。
+   */
+  const memory = new MemoryStore({ dbPath: join(dataDir, "agent.sqlite") });
   /** 每个会话的工具审批策略（哪些工具免问）。 */
   const policies = new Policies(dataDir);
   /** 上次在看的会话（前端 localStorage 的兜底）。 */
@@ -218,6 +226,7 @@ export async function createContext(): Promise<AppContext> {
     dataDir,
     approvals,
     push,
+    memory,
     titleOf: (conversationId) => titles.get(conversationId),
   });
   console.log(`pii 启动中…`);
@@ -339,7 +348,7 @@ export async function createContext(): Promise<AppContext> {
   /**
    * 真正的关停流程。顺序不能乱：
    *   ① 等空闲（可选）→ ② 停接新连接、给老连接收尾 → ③ 处置审批、停防休眠
-   *   → ④ 关 harness → ⑤ 关只读 SQLite → ⑥ 删进程锁 → exit
+   *   → ④ 关 harness → ⑤ 关辅助 SQLite 连接（只读查询 / 记忆）→ ⑥ 删进程锁 → exit
    *
    * ⑤ 在 ⑥ 之前：锁没了别的进程就能进来，这时还攥着库句柄就是脏读的来源。
    */
@@ -365,6 +374,7 @@ export async function createContext(): Promise<AppContext> {
       console.error("  关闭 harness 失败（继续退出）:", error);
     }
     closeTaskQueries();
+    memory.close();
     releaseLock();
     console.log(`  已退出（${reason}）`);
     // 正常关停 = 0；因未捕获异常而关停 = 非 0，让编排/日志能区分「我要求它退」和「它自己崩了」
@@ -402,6 +412,7 @@ export async function createContext(): Promise<AppContext> {
     dataDir,
     releaseLock,
     policies,
+    memory,
     lastConversation,
     approvals,
     watching,

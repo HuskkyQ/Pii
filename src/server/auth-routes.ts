@@ -31,12 +31,59 @@ import type { AppContext } from "./context.ts";
  */
 const LOGIN_FREE_TRIES = 5; // 前 5 次只退避，不锁
 const LOGIN_LOCK_MS = 5 * 60_000; // 第 6 次失败起锁 5 分钟
+const MAX_TRACKED_IPS = 1000; // 失败表的容量上限（见下面淘汰逻辑）
 const loginFailures = new Map<string, { n: number; lockUntil: number }>();
 
-/** 取真实客户端 IP：Caddy 会带 X-Forwarded-For；直连时退回一个固定标记 */
+/**
+ * 直接求当前连接的 socket 地址 —— 这是唯一**伪造不了**的值。
+ *
+ * `X-Forwarded-For` 是普通请求头，谁都能写；socket 地址由内核填充，客户端改不了。
+ * 所以只要能拿到它，就以它为准。
+ */
+function peerIp(c: Context): string {
+  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
+  const raw = env?.incoming?.socket?.remoteAddress ?? "";
+  // IPv4-mapped（::ffff:127.0.0.1）统一成 v4 写法，让下面的比较不用写两套
+  return raw.replace(/^::ffff:/, "");
+}
+
+/**
+ * 取真实客户端 IP，给登录限速当 key。
+ *
+ * 唯一**不能**做的事是相信头里的第一段：客户端自己就能往 `X-Forwarded-For` 里塞任意内容，
+ * 反向代理只会在后面**追加**它看到的对端地址。取 `[0]` 等于把限速的钥匙交给攻击者 ——
+ * 每次换一个假 IP 就永远触发不了锁定，还能顺带把 scrypt 的 CPU 打满。
+ *
+ * 所以分两种情况：
+ *   1. 对端是同机（127.0.0.1 / ::1）→ 前面一定站着本机代理（Caddy），
+ *      取 `X-Forwarded-For` 的**最后一段**。代理追加、代理覆盖两种行为下末尾都是真实 IP。
+ *   2. 对端是外网 / 局域网 / tailscale → 没有代理，直接连过来的就是真身，
+ *      用 socket 地址，头里写什么都无视。
+ */
 function clientIp(c: Context): string {
+  const peer = peerIp(c);
   const forwarded = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "";
-  return forwarded.split(",")[0]?.trim() || "direct";
+  const lastHop = forwarded.split(",").at(-1)?.trim() ?? "";
+  const behindLocalProxy = peer === "" || peer === "127.0.0.1" || peer === "::1";
+  if (behindLocalProxy && lastHop) return lastHop;
+  return peer || "direct";
+}
+
+/**
+ * 登录成功后允许跳回的地址：只接受站内相对路径。
+ *
+ * `startsWith("/")` 是不够的 —— `//evil.example` 也以 `/` 开头，而
+ * `Location: //evil.example` 会让浏览器跳到外站（协议相对 URL）。
+ * 反斜杠在部分浏览器里等价于斜杠，所以 `/\evil.example` 也要拦。
+ */
+function safeNext(value: unknown): string {
+  if (typeof value !== "string") return "/";
+  const v = value.trim();
+  if (!v.startsWith("/")) return "/";
+  if (v.startsWith("//") || v.startsWith("/\\")) return "/";
+  // 控制字符（含 \r \n）能截断 Location 头，一律拒绝
+  if (/[\u0000-\u001f\u007f]/.test(v)) return "/";
+  return v;
 }
 
 
@@ -73,7 +120,7 @@ export function registerAuth(app: Hono, ctx: AppContext): void {
       pass?: string;
       next?: string;
     };
-    const next = typeof body.next === "string" && body.next.startsWith("/") ? body.next : "/";
+    const next = safeNext(body.next);
     // 失败后要停在原来那一栏：提交了 user/pass 就是密码栏，否则是令牌栏
     const mode: LoginMode = typeof body.user === "string" || typeof body.pass === "string" ? "pw" : "token";
 
@@ -105,9 +152,19 @@ export function registerAuth(app: Hono, ctx: AppContext): void {
     // ③ 失败：累加 → 超限锁定 → 否则指数退避（1s / 2s / 4s / 8s 封顶）
     entry.n += 1;
     if (entry.n > LOGIN_FREE_TRIES) entry.lockUntil = Date.now() + LOGIN_LOCK_MS;
+    // 先删再设：Map 保留插入顺序，重复 set 不会刷新位置，
+    // 不这么做的话「还在挨打的老 IP」最容易被下面的淘汰逻辑选中。
+    loginFailures.delete(ip);
     loginFailures.set(ip, entry);
-    // Map 不能无限长：来源过多就整体清空（失败记录不值得精确回收）
-    if (loginFailures.size > 1000) loginFailures.clear();
+    // Map 不能无限长，但**绝不能整体清空**：清空一次就等于给攻击者一个「重置所有锁定」
+    // 的开关（刷 1001 个来源即可解锁，连已经锁住的那些人一起放过）。
+    // 改成按插入顺序淘汰最老的一批，现有锁定记录尽量保住。
+    if (loginFailures.size > MAX_TRACKED_IPS) {
+      for (const key of loginFailures.keys()) {
+        if (loginFailures.size <= MAX_TRACKED_IPS - 200) break;
+        loginFailures.delete(key);
+      }
+    }
 
     if (entry.n > LOGIN_FREE_TRIES) {
       return c.html(

@@ -16,6 +16,7 @@ import { createRegistry } from "@earendil-works/pi-durable";
 
 import { memoryExtension } from "../src/memory/section.ts";
 import { MemoryStore } from "../src/memory/store.ts";
+import { memoryTool } from "../src/tools/memory.ts";
 
 interface Row {
   content: string;
@@ -50,12 +51,14 @@ function seed(dbPath: string, rows: Row[]): void {
 async function withStore(
   budgetChars: number | undefined,
   body: (store: MemoryStore, dbPath: string) => void | Promise<void>,
+  maxEntries?: number,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "pii-memory-test-"));
   const dbPath = join(dir, "agent.sqlite");
   const store = new MemoryStore({
     dbPath,
     ...(budgetChars === undefined ? {} : { budgetChars }),
+    ...(maxEntries === undefined ? {} : { maxEntries }),
   });
   try {
     await body(store, dbPath);
@@ -119,6 +122,115 @@ test("预算：第一条就超预算时仍然注入（宁可挤一点，也不�
     assert.ok(text);
     assert.match(text, /乙{200}/);
     assert.equal(store.snapshot().injected, 1);
+  });
+});
+
+test("写入：add → update → remove 的完整生命周期", async () => {
+  await withStore(undefined, (store) => {
+    const added = store.add({ content: "用户用 pnpm", tags: ["偏好"], pinned: true });
+    assert.ok(added.ok);
+    assert.equal(added.created, true);
+    assert.equal(added.entry.content, "用户用 pnpm");
+    assert.deepEqual(added.entry.tags, ["偏好"]);
+    assert.equal(added.entry.pinned, true);
+    assert.equal(added.entry.source, "manual");
+
+    const updated = store.update(added.entry.id, { content: "用户用 pnpm，不要 npm", pinned: false });
+    assert.ok(updated.ok);
+    assert.equal(updated.entry.content, "用户用 pnpm，不要 npm");
+    assert.equal(updated.entry.pinned, false);
+    assert.deepEqual(updated.entry.tags, ["偏好"]);
+
+    assert.equal(store.remove(added.entry.id), true);
+    assert.deepEqual(store.list(), []);
+    assert.equal(store.remove(added.entry.id), false);
+  });
+});
+
+test("写入：重复 add 幂等，返回同一条并更新时间", async () => {
+  await withStore(undefined, (store) => {
+    const first = store.add({ content: "用户用 pnpm" });
+    const second = store.add({ content: "  用户用   pnpm  " });
+    assert.ok(first.ok && second.ok);
+    assert.equal(first.created, true);
+    assert.equal(second.created, false);
+    assert.equal(second.entry.id, first.entry.id);
+    assert.ok(second.entry.updatedAt >= first.entry.updatedAt);
+    assert.equal(store.list().length, 1);
+  });
+});
+
+test("写入：空内容、超长、已满都会被拒", async () => {
+  await withStore(
+    undefined,
+    (store) => {
+      assert.deepEqual(store.add({ content: "   " }), { ok: false, reason: "empty" });
+      assert.deepEqual(store.add({ content: "甲".repeat(1001) }), { ok: false, reason: "too-long" });
+      assert.ok(store.add({ content: "第一条" }).ok);
+      assert.deepEqual(store.add({ content: "第二条" }), { ok: false, reason: "full" });
+    },
+    1,
+  );
+});
+
+test("写入：update 的不存在 / 撞车 / 空内容", async () => {
+  await withStore(undefined, (store) => {
+    const first = store.add({ content: "甲" });
+    assert.ok(first.ok);
+    const second = store.add({ content: "乙" });
+    assert.ok(second.ok);
+
+    assert.deepEqual(store.update(999, { content: "丙" }), { ok: false, reason: "not-found" });
+    assert.deepEqual(store.update(first.entry.id, { content: "  " }), { ok: false, reason: "empty" });
+    assert.deepEqual(store.update(first.entry.id, { content: "乙" }), {
+      ok: false,
+      reason: "duplicate",
+    });
+    // 改成自己原来的内容不算撞车
+    assert.ok(store.update(second.entry.id, { content: "乙" }).ok);
+  });
+});
+
+test("工具提示只在装了工具时出现", async () => {
+  await withStore(undefined, (store) => {
+    store.add({ content: "用户用 pnpm" });
+    assert.doesNotMatch(String(store.renderForPrompt()), /memory 工具/);
+    assert.match(String(store.renderForPrompt({ mentionTool: true })), /memory 工具/);
+  });
+});
+
+test("工具：add 记为 agent 来源并带上会话 id，list 能列出来", async () => {
+  await withStore(undefined, async (store) => {
+    const tool = memoryTool(store);
+    const api = { conversationId: 7 } as never;
+    const added = await tool.execute({ action: "add", content: "用户用 pnpm" } as never, api, {} as never);
+    assert.match(String((added.output as { text: string }[])[0]!.text), /已记住 #1/);
+
+    const [entry] = store.list();
+    assert.equal(entry!.source, "agent");
+    assert.equal(entry!.conversationId, 7);
+
+    const listed = await tool.execute({ action: "list" } as never, api, {} as never);
+    assert.match(String((listed.output as { text: string }[])[0]!.text), /\[#1\].*用户用 pnpm/);
+
+    const removed = await tool.execute({ action: "remove", id: entry!.id } as never, api, {} as never);
+    assert.match(String((removed.output as { text: string }[])[0]!.text), /已删除/);
+    assert.deepEqual(store.list(), []);
+  });
+});
+
+test("扩展：tool 开关决定是否注册 memory 工具", async () => {
+  await withStore(undefined, (store) => {
+    const withTool = createRegistry();
+    withTool.install(memoryExtension(store, { tool: true }));
+    assert.ok(withTool.snapshot().tools().some(({ tool }) => tool.name === "memory"));
+
+    const withoutTool = createRegistry();
+    withoutTool.install(memoryExtension(store));
+    assert.equal(
+      withoutTool.snapshot().tools().some(({ tool }) => tool.name === "memory"),
+      false,
+    );
   });
 });
 

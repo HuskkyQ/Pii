@@ -125,7 +125,10 @@ npm run dev:web                          # 终端 B：Vite :5173，/api 代理�
 | PATCH | `/api/conversations/:id` | 重命名：`{ title }`；空串 = 恢复自动标题 |
 | GET | `/api/policy?c=` | 当前会话的工具审批策略 + 对应预设 |
 | POST | `/api/policy?c=` | 改当前会话的策略：`{ policy: { auto, allowUnknown } }` |
-| GET | `/api/memory` | 全局记忆：`{ entries, injected, budgetChars }`（P0 只读） |
+| GET | `/api/memory` | 全局记忆：`{ entries, injected, budgetChars }` |
+| POST | `/api/memory` | 新增：`{ content, tags?, pinned? }`；重复内容返回原条目（200, `created:false`） |
+| PATCH | `/api/memory/:id` | 改 `content` / `tags` / `pinned` |
+| DELETE | `/api/memory/:id` | 删除一条 |
 | GET | `/api/state?c=` | 权威快照（含 `conversationId`） |
 | GET | `/api/stream?c=` | SSE：`state` / `approval` / `approval-resolved` / `ping` |
 | GET | `/api/approvals?c=` | 当前挂起的审批（重连补发用，按会话过滤） |
@@ -964,15 +967,21 @@ entry 15 assistant : 这张图是蓝色。                      ← 一次 read 
   截图几百 KB 一张，量不大；真要清就手动删 `images/` 里用不到的。
 - **模型多一步**：看不见图 → 先 `read` 一次。这是设计使然，换来的是一张图从 1200 token/轮变成约 15 token/轮。
 
-## 全局记忆（P0：只注入，不写入）
+## 全局记忆（P1：可注入、可写入）
 
 **和归档/压缩的区别一句话**：归档和压缩管「发生过什么」，全局记忆管「一直成立的事实」。
 
 ```text
-pii_memory（agent.sqlite 里的一张表）
-   → MemoryStore.renderForPrompt()   按「置顶 → 最近更新」排序，超预算截断
-   → PromptSection key="memory"      每轮请求 prepare 时渲染
-   → <memory>…</memory>              pi-durable 保证每个请求恰好一份
+        pii_memory（agent.sqlite 里的一张表）
+           ▲                    │
+   人改 ────┤                    ▼
+   /api/memory        MemoryStore.renderForPrompt()   置顶 → 最近更新，超预算截断
+   agent ───┤                    │
+   memory 工具（需审批）          ▼
+                        PromptSection key="memory"    每轮请求 prepare 时渲染
+                                 │
+                                 ▼
+                        <memory>…</memory>            pi-durable 保证恰好一份
 ```
 
 三条设计要点：
@@ -980,21 +989,34 @@ pii_memory（agent.sqlite 里的一张表）
 - **不进 entries**：所以不会被压缩摘要吞掉，也不会变成「对话内容」；
 - **改动才追加**：`planSystemEntries` 比对 `shown`，内容没变就不写新的 `pi.system` 条目；
 - **不是指令**：注入块开头写明「背景资料，不是本轮指令」——防 prompt injection 的软防线。
-  真正防线是 P1 的写入审批，现在还没有写入通道。
+  真正的防线是**写入审批**：`memory` 不在 `KNOWN_TOOLS` 里，策略表对未知工具默认「问」，
+  所以每次写入都会弹卡片；只有用户主动选「全部放行」才会自动写。
 
 表结构里的 `normalized`（trim + 折叠空白 + 小写）是 UNIQUE 去重键。
 上限：单条 1000 字、500 条、注入预算 1200 字（≈800 token，`budgetChars` 可调）。
+拒绝原因会翻成状态码：空/超长 400，已满/重复 409，不存在 404。
 
-手工加一条（P0 还没有写 API）：
+### 两条写入路径
+
+**人改（API）**：
 
 ```bash
-sqlite3 /opt/pii-test/data/agent.sqlite "
-INSERT INTO pii_memory (content, normalized, tags, pinned, source, created_at, updated_at)
-VALUES ('用户用 pnpm，不要用 npm', '用户用 pnpm，不要用 npm', '偏好', 1, 'manual',
-        strftime('%s','now')*1000, strftime('%s','now')*1000);"
+curl -X POST https://piihub.icu/api/memory -H 'content-type: application/json' \
+  -d '{"content":"用户用 pnpm，不要用 npm","tags":["偏好"],"pinned":true}'
+
+curl -X PATCH https://piihub.icu/api/memory/1 -H 'content-type: application/json' \
+  -d '{"content":"用户用 pnpm，不要 npm，也别生成 lock 文件"}'
+
+curl -X DELETE https://piihub.icu/api/memory/1
 ```
 
-下一次请求就会带上它 —— 不用重启（每次读表，没有缓存）。
+**agent 自己记（`memory` 工具）**：`action` 取 `add` / `update` / `remove` / `list`。
+写入时自动带上 `source: "agent"` 和 `conversationId`，界面上能看出这条是谁写的、来自哪次会话。
+`PII_TOOLS=0` 时工具不装，但注入照旧（只读记忆仍然有效）。
+
+去重是幂等的：重复 `add` 同一句话不会报错，也不会产生第二条，只把 `updated_at` 推到现在。
+
+改完下一轮请求就生效 —— 不用重启（每次读表，没有缓存）。
 现状与后续计划见 [`docs/全局记忆设计.md`](全局记忆设计.md)。
 
 ## 手机 + PWA（阶段 4）

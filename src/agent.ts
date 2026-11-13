@@ -105,8 +105,8 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
       }),
     );
   }
-  // 全局记忆：不进对话条目，每轮请求前作为 system section 渲染
-  if (options.memory) registry.install(memoryExtension(options.memory));
+  // 全局记忆：不进对话条目，每轮请求前作为 system section 渲染；有工具时再装 memory 工具
+  if (options.memory) registry.install(memoryExtension(options.memory, { tool: withTools }));
   // 归档：上下文被压缩之前，先把被替换的原文落盘（只增不改）
   registry.install(
     archiveExtension({

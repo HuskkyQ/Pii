@@ -10,8 +10,10 @@
  *
  * 和 hidden-conversations.json 是同一套思路：纯文件、秒生效、失败不影响主流程。
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { writeJsonAtomic } from "../atomic-file.ts";
 
 const TITLES_FILE = "conversation-titles.json";
 
@@ -40,7 +42,7 @@ function writeTitles(dataDir: string, titles: Record<string, string>): void {
   for (const key of Object.keys(titles).sort((a, b) => Number(a) - Number(b))) {
     sorted[key] = titles[key];
   }
-  writeFileSync(join(dataDir, TITLES_FILE), JSON.stringify(sorted, null, 2));
+  writeJsonAtomic(join(dataDir, TITLES_FILE), sorted);
 }
 
 /** 自定义标题表。启动时读一次，之后一直在内存里。 */

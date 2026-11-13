@@ -11,8 +11,10 @@
  * 持久化到 `conversation-policies.json` —— 和 titles / hidden 一样是纯文件：
  * 不改库表、不动 Harness，删掉文件就退回默认策略。
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { writeJsonAtomic } from "../atomic-file.ts";
 
 import { loadConfig } from "../config.ts";
 
@@ -94,7 +96,7 @@ function readAll(dataDir: string): Record<string, Policy> {
 function writeAll(dataDir: string, map: Record<string, Policy>): void {
   const sorted: Record<string, Policy> = {};
   for (const key of Object.keys(map).sort((a, b) => Number(a) - Number(b))) sorted[key] = map[key];
-  writeFileSync(join(dataDir, POLICIES_FILE), JSON.stringify(sorted, null, 2));
+  writeJsonAtomic(join(dataDir, POLICIES_FILE), sorted);
 }
 
 /** 会话策略表。启动时读一次，之后一直在内存里。 */

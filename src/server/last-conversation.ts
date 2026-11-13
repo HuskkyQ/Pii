@@ -10,8 +10,10 @@
  *
  * 单用户自托管，全局就一份，落 `last-conversation.json`。
  */
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+
+import { writeJsonAtomic } from "../atomic-file.ts";
 
 const FILE = "last-conversation.json";
 
@@ -52,7 +54,7 @@ export class LastConversation {
       return;
     }
     this.#id = id;
-    writeFileSync(join(this.#dataDir, FILE), JSON.stringify({ conversationId: id }, null, 2));
+    writeJsonAtomic(join(this.#dataDir, FILE), { conversationId: id });
   }
 
   /** 会话被删掉了，如果正好是它，清掉，免得冷启动恢复到已删除会话。 */

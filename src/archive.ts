@@ -28,8 +28,10 @@
  * 归档目录默认 `<数据目录>/archive/<会话id>/`，可用 PII_ARCHIVE_DIR 指到项目里的某个文件夹。
  * 目录**由调用方算好传进来**（本文件只管路径，不管环境变量）。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+import { writeFileAtomic } from "./atomic-file.ts";
 
 /** 归档用到的条目形状（只依赖我们真正读的字段）。 */
 export interface ArchiveEntry {
@@ -154,7 +156,7 @@ export function archiveEntries(options: ArchiveOptions): ArchiveResult | null {
   const content = `${header}${body}`;
 
   const path = join(dir, `${String(seq).padStart(4, "0")}-${fileStamp()}-${options.reason}.md`);
-  writeFileSync(path, content, "utf8");
+  writeFileAtomic(path, content);
   return { path, entries: entries.length, bytes: Buffer.byteLength(content) };
 }
 

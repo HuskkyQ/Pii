@@ -12,12 +12,13 @@
  *  - iOS 只在**添加到主屏幕之后**才给推送权限，而且必须 https。
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import webpush from "web-push";
 
 import { loadConfig } from "../config.ts";
+import { writeJsonAtomic } from "../atomic-file.ts";
 
 /* 推送的形状与「出口类型」在 ports.ts（agent 层），实现留在本文件。 */
 import type { PushPayload, PushPort } from "../ports.ts";
@@ -60,15 +61,35 @@ function readJson<T>(path: string): T | undefined {
   }
 }
 
+/**
+ * 读出「文件在不在」这件事本身。
+ *
+ * 只靠 `readJson` 分不清两种 `undefined`：
+ *   - 文件不存在   → 全新安装，生成一对新密钥没问题
+ *   - 文件存在但坏了 → **绝不能覆盖重建**：VAPID 公钥换了，
+ *     所有设备上已经注册的订阅立刻作废，用户得挨个重新「允许通知」
+ * 所以这里单列一个状态，让调用方能区分对待。
+ */
+type FileState<T> = { kind: "missing" } | { kind: "corrupt" } | { kind: "ok"; value: T };
+
+function readJsonWithState<T>(path: string): FileState<T> {
+  if (!existsSync(path)) return { kind: "missing" };
+  try {
+    return { kind: "ok", value: JSON.parse(readFileSync(path, "utf8")) as T };
+  } catch {
+    return { kind: "corrupt" };
+  }
+}
+
 function writeJson(path: string, value: unknown): void {
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2), { mode: 0o600 });
+  // 0600：订阅表里有 endpoint 和加密密钥，VAPID 私钥更不能给别人看
+  writeJsonAtomic(path, value, { mode: 0o600 });
 }
 
 export class PushHub implements PushPort {
   #dataDir: string;
   #isWatched: (conversationId: number | undefined) => boolean;
-  #keys: VapidKeys;
+  #keys: VapidKeys | undefined;
   #subs = new Map<string, PushSubscriptionRecord>();
   #enabled: boolean;
 
@@ -79,8 +100,18 @@ export class PushHub implements PushPort {
     this.#enabled = config.pushEnabled;
 
     this.#keys = this.#loadOrCreateKeys();
-    if (this.#enabled) {
+    if (this.#keys && this.#enabled) {
       webpush.setVapidDetails(config.vapidSubject, this.#keys.publicKey, this.#keys.privateKey);
+    } else if (!this.#keys && config.pushEnabled) {
+      // 密钥文件坏了：这一次不推送，但**不覆盖**它 —— 留着还能人工救回来。
+      // 同时把 enabled 置 false：没有 setVapidDetails 就调 sendNotification 会直接抛错，
+      // 而且前端看到 enabled:false 就不会再去要订阅。
+      this.#enabled = false;
+      console.warn(
+        `  ⚠ 推送密钥文件 ${join(this.#dataDir, VAPID_FILE)} 解析失败，本次启动不启用推送。\n` +
+          "    不要直接删它：删掉会换新的密钥对，所有设备都要重新订阅。\n" +
+          "    先确认文件内容（应为 {\"publicKey\":\"...\",\"privateKey\":\"...\"}），修好再重启。",
+      );
     }
 
     const stored = readJson<PushSubscriptionRecord[]>(join(this.#dataDir, SUBS_FILE)) ?? [];
@@ -88,18 +119,29 @@ export class PushHub implements PushPort {
   }
 
   get enabled(): boolean {
-    return this.#enabled;
+    return this.#enabled && this.#keys !== undefined;
   }
 
   /** 浏览器订阅前要先拿到这把公钥（`applicationServerKey`）。 */
   get publicKey(): string {
-    return this.#keys.publicKey;
+    return this.#keys?.publicKey ?? "";
   }
 
-  #loadOrCreateKeys(): VapidKeys {
+  /**
+   * 读已有的 VAPID 密钥；只有**确认文件不存在**时才生成新的。
+   * 返回 undefined = 文件坏了，调用方应当关掉推送而不是重建密钥。
+   */
+  #loadOrCreateKeys(): VapidKeys | undefined {
     const path = join(this.#dataDir, VAPID_FILE);
-    const stored = readJson<VapidKeys>(path);
-    if (stored?.publicKey && stored?.privateKey) return stored;
+    const state = readJsonWithState<VapidKeys>(path);
+
+    if (state.kind === "corrupt") return undefined;
+    if (state.kind === "ok") {
+      const { publicKey, privateKey } = state.value ?? {};
+      if (publicKey && privateKey) return { publicKey, privateKey };
+      // 能解析成 JSON 但字段不全，同样视为坏文件
+      return undefined;
+    }
 
     const generated = webpush.generateVAPIDKeys();
     const keys: VapidKeys = { publicKey: generated.publicKey, privateKey: generated.privateKey };

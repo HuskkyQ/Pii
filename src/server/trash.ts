@@ -12,9 +12,11 @@
  *   2. 真正删行 → 只在**没有人在看、也没有在跑**的时候立刻做；
  *      做不了就等下次启动，那时库还没被打开，删得最干净
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+import { writeJsonAtomic } from "../atomic-file.ts";
 
 const HIDDEN_FILE = "hidden-conversations.json";
 
@@ -30,7 +32,7 @@ function readHidden(dataDir: string): number[] {
 }
 
 function writeHidden(dataDir: string, ids: number[]): void {
-  writeFileSync(join(dataDir, HIDDEN_FILE), JSON.stringify([...new Set(ids)].sort((a, b) => a - b), null, 2));
+  writeJsonAtomic(join(dataDir, HIDDEN_FILE), [...new Set(ids)].sort((a, b) => a - b));
 }
 
 /** 被删掉的会话 id。启动时读一次，之后一直在内存里。 */

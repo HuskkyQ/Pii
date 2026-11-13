@@ -26,12 +26,13 @@
  * 跟 Safari 的存储是分开的，所以在独立窗口里点一次登录就够了。
  */
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Context } from "hono";
 
 import { loadConfig } from "../config.ts";
+import { writeFileAtomic } from "../atomic-file.ts";
 
 const COOKIE = "pii_token";
 const TOKEN_FILE = "auth-token";
@@ -63,7 +64,7 @@ function readOrCreateToken(dataDir: string): string {
   }
   const token = randomBytes(32).toString("base64url");
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(path, `${token}\n`, { mode: 0o600 });
+  writeFileAtomic(path, `${token}\n`, { mode: 0o600 });
   return token;
 }
 

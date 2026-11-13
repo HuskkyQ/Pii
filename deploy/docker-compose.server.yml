@@ -25,6 +25,10 @@ services:
     image: ${PII_IMAGE:-pii:server}
     container_name: pii-test
     restart: unless-stopped
+    # `docker stop` 先发 SIGTERM，等这么久还没退才 SIGKILL。
+    # 必须大于 PII_SHUTDOWN_IDLE_MS(默认 10s) + PII_SHUTDOWN_GRACE_MS(默认 3s)，
+    # 否则容器会在「还在等正在生成的回答写完」时被硬杀 —— 那正是腰斩的来源。
+    stop_grace_period: 20s
     # 账号密码登录的凭证（PII_USER / PII_PASS_HASH）放在宿主机文件里，
     # 权限 600，**不进仓库**。用 `npm run hash-pass` 生成哈希。
     # required: false —— 文件不存在时容器照样能起（只有令牌登录可用）。

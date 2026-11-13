@@ -59,4 +59,8 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PII_PORT||8787)+'/manifest.webmanifest').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["npx", "tsx", "src/server/main.ts"]
+# 为什么不用 `npx tsx ...`：那会变成 npx → tsx → node 三层进程，而 `docker stop`
+# 只把 SIGTERM 发给 PID 1（npx），靠 npm 逐层转发才能到真正的 node。
+# 只要中间哪一层换了行为，优雅关停就静默失效 —— 恢复成「容器被 SIGKILL，生成被腰斩」。
+# 单进程用 node 直接跑 TS，信号一打就到，`--import tsx` 负责把 .ts 编进来。
+CMD ["node", "--import", "tsx", "src/server/main.ts"]

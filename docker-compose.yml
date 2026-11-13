@@ -12,6 +12,9 @@ services:
   pii:
     build: .
     restart: unless-stopped
+    # 要大于 PII_SHUTDOWN_IDLE_MS + PII_SHUTDOWN_GRACE_MS（默认 10s + 3s），
+    # 否则 SIGTERM 之后的优雅收尾会被 docker 的 SIGKILL 打断。
+    stop_grace_period: 20s
     environment:
       # 公网必须开鉴权，否则谁都能让它跑 bash
       PII_AUTH: "1"

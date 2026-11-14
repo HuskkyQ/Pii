@@ -43,15 +43,21 @@ trap 'rm -rf "$WORK"' EXIT
 # 优先用容器里的 SQLite 做一致性快照；容器没跑就退回 cp（此时无人写入，风险低）
 snapshot_db() {
   if docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-    docker exec "$CONTAINER" node -e '
-      const fs = require("node:fs");
-      const { DatabaseSync } = require("node:sqlite");
-      const target = "/data/.backup-snapshot.sqlite";
-      try { fs.unlinkSync(target); } catch {}
-      const db = new DatabaseSync("/data/agent.sqlite");
-      db.exec(`VACUUM INTO ${JSON.stringify(target)}`);
-      db.close();
-    ' >/dev/null 2>&1 || die "容器内快照失败（VACUUM INTO）"
+    # 为什么走 stdin（node -）而不是 node -e：脚本本体是单引号包起来的，
+    # 里面没法再写 SQL 需要的单引号；heredoc 用 'JS' 引住，原样传给容器。
+    if ! docker exec -i "$CONTAINER" node - >/dev/null 2>&1 <<'JS'
+const fs = require("node:fs");
+const { DatabaseSync } = require("node:sqlite");
+const target = "/data/.backup-snapshot.sqlite";
+try { fs.unlinkSync(target); } catch {}
+const db = new DatabaseSync("/data/agent.sqlite");
+// SQLite 里双引号是标识符，文件名必须用单引号
+db.exec("VACUUM INTO '/data/.backup-snapshot.sqlite'");
+db.close();
+JS
+    then
+      die "容器内快照失败（VACUUM INTO）"
+    fi
     docker cp "$CONTAINER:/data/.backup-snapshot.sqlite" "$WORK/agent.sqlite" >/dev/null 2>&1 \
       || die "从容器取快照失败"
     docker exec "$CONTAINER" rm -f /data/.backup-snapshot.sqlite >/dev/null 2>&1 || true
@@ -74,15 +80,16 @@ verify_dir() {
   local dir=$1
   [ -f "$dir/agent.sqlite" ] || { log "❌ 备份里没有 agent.sqlite"; return 1; }
   local out
-  out=$(docker run --rm --network none -v "$dir:/restore:ro" --entrypoint node "$IMAGE" -e '
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync("/restore/agent.sqlite", { readOnly: true });
-    const integrity = db.prepare("PRAGMA integrity_check").get().integrity_check;
-    const entries = db.prepare("select count(*) n from entries").get().n;
-    const conversations = db.prepare("select count(*) n from conversations").get().n;
-    db.close();
-    console.log(JSON.stringify({ integrity, entries, conversations }));
-  ' 2>&1) || { log "❌ 校验容器起不来：$out"; return 1; }
+  out=$(docker run --rm -i --network none -v "$dir:/restore:ro" --entrypoint node "$IMAGE" - 2>&1 <<'JS'
+const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync("/restore/agent.sqlite", { readOnly: true });
+const integrity = db.prepare("PRAGMA integrity_check").get().integrity_check;
+const entries = db.prepare("select count(*) n from entries").get().n;
+const conversations = db.prepare("select count(*) n from conversations").get().n;
+db.close();
+console.log(JSON.stringify({ integrity, entries, conversations }));
+JS
+  ) || { log "❌ 校验容器起不来：$out"; return 1; }
 
   case "$out" in
     *'"integrity":"ok"'*) ;;

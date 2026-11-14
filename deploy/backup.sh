@@ -15,6 +15,9 @@
 # 都在数据目录里，但 pii-deploy 只备份 agent.sqlite*。盘坏了这些会一起丢。
 set -u
 
+# 备份包里含 auth-token 和 vapid.json（推送私钥），不能是全局可读
+umask 077
+
 DATA=${PII_DATA_DIR:-/opt/pii-test/data}
 DEST=${PII_BACKUP_DIR:-/opt/pii-test/backups/scheduled}
 CONTAINER=${PII_CONTAINER:-pii-test}

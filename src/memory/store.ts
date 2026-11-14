@@ -14,7 +14,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 
-import type { MemoryEntry } from "../../shared/types.ts";
+import type { MemoryEntry, MemorySnapshot } from "../../shared/types.ts";
 
 /** 注入预算（字符数）。中文约 1.5 字/token，1200 ≈ 800 token。 */
 const DEFAULT_BUDGET_CHARS = 1200;
@@ -36,13 +36,6 @@ export interface MemoryStoreOptions {
   dbPath: string;
   budgetChars?: number;
   maxEntries?: number;
-}
-
-export interface MemorySnapshot {
-  entries: MemoryEntry[];
-  /** 实际会进入 system prompt 的条数（受预算限制）。 */
-  injected: number;
-  budgetChars: number;
 }
 
 /** 写路径的拒绝原因。路由和工具各自翻译成人话，store 只给代码。 */

@@ -1,5 +1,13 @@
 /** 与服务端通信：一个 fetch 封装 + 一个 EventSource 封装。 */
-import type { ConversationSummary, DirListing, ModelList, PresetId, ToolPolicy } from "@/lib/types";
+import type {
+  ConversationSummary,
+  DirListing,
+  MemoryEntry,
+  MemorySnapshot,
+  ModelList,
+  PresetId,
+  ToolPolicy,
+} from "@/lib/types";
 
 /**
  * 401 的处理：跳登录页。
@@ -186,6 +194,48 @@ export function setPolicy(policy: ToolPolicy, conversationId?: number) {
     `/api/policy${scope(conversationId)}`,
     { policy, conversationId },
   );
+}
+
+/* ---------- 全局记忆 ---------- */
+
+/**
+ * 写记忆专用的 fetch：服务端拒绝时回的是 `{ error }` 中文文案，
+ * 直接拿去 toast 就行，别把状态码和 JSON 拼在一起给人看。
+ */
+async function memoryWrite<T>(
+  path: string,
+  method: "POST" | "PATCH" | "DELETE",
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    ...(body === undefined
+      ? {}
+      : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+  });
+  handleUnauthorized(res.status);
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `请求失败（${res.status}）`);
+  return data as T;
+}
+
+export function getMemory() {
+  return getJson<MemorySnapshot>("/api/memory");
+}
+
+export function addMemory(input: { content: string; tags?: string[]; pinned?: boolean }) {
+  return memoryWrite<{ entry: MemoryEntry; created: boolean }>("/api/memory", "POST", input);
+}
+
+export function updateMemory(
+  id: number,
+  patch: { content?: string; tags?: string[]; pinned?: boolean },
+) {
+  return memoryWrite<{ entry: MemoryEntry }>(`/api/memory/${id}`, "PATCH", patch);
+}
+
+export function deleteMemory(id: number) {
+  return memoryWrite<{ ok: boolean }>(`/api/memory/${id}`, "DELETE");
 }
 
 /** 重命名会话。传空串表示恢复自动标题（从第一条用户消息推）。 */

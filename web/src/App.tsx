@@ -5,6 +5,7 @@ import { ConversationsPanel } from "@/components/ConversationsPanel";
 import { CwdPicker } from "@/components/CwdPicker";
 import { DebugHud } from "@/components/DebugHud";
 import { InstallHint } from "@/components/InstallHint";
+import { MemoryPanel } from "@/components/MemoryPanel";
 import { ModelPicker } from "@/components/ModelPicker";
 import { PermissionPicker } from "@/components/PermissionPicker";
 import { StatusBar } from "@/components/StatusBar";
@@ -114,6 +115,7 @@ export default function App() {
   }, [sidebarCollapsed]);
 
   const [quote, setQuote] = useState<string | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   const { items, refresh, create, creating } = useConversations();
   const { connection, snapshot, approvals, approve, older, hasMore, loadingOlder, loadOlder } =
@@ -274,6 +276,11 @@ export default function App() {
           onCreateWithCwd={(anchor) => void createNewWithCwd(anchor)}
           creating={creating}
           onDelete={remove}
+          onOpenMemory={() => {
+            // 手机上记忆面板是独立的底层弹层：先收抽屉，避免两层遮罩叠着
+            setMenuOpen(false);
+            setMemoryOpen(true);
+          }}
         />
 
         {/*
@@ -365,6 +372,8 @@ export default function App() {
           onApply={updatePolicy}
           onClose={closePicker}
         />
+
+        <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
         <DebugHud />
 

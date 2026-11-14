@@ -14,6 +14,8 @@ export type {
   Snapshot,
   ApprovalRequest,
   ConversationSummary,
+  MemoryEntry,
+  MemorySnapshot,
 } from "@shared/types";
 
 export {

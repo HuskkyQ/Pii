@@ -1,4 +1,4 @@
-import { FolderPlus, Loader2, MessageSquare, Plus, Trash2, X } from "lucide-react";
+import { Brain, FolderPlus, Loader2, MessageSquare, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ interface ListProps {
   onCreateWithCwd?: (anchor: HTMLElement) => void;
   creating: boolean;
   onDelete?: (id: number) => Promise<void>;
+  /** 打开全局记忆面板（入口放在侧栏底部，桌机和手机抽屉共用） */
+  onOpenMemory?: () => void;
 }
 
 interface PanelProps extends ListProps {
@@ -28,7 +30,16 @@ const SIDEBAR_WIDTH = 240;
 const SIDEBAR_ANIM_MS = 260;
 
 /** 会话列表本体：桌面侧栏和手机抽屉共用同一份。 */
-function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd, creating, onDelete }: ListProps) {
+function ConversationList({
+  items,
+  activeId,
+  onSelect,
+  onCreate,
+  onCreateWithCwd,
+  creating,
+  onDelete,
+  onOpenMemory,
+}: ListProps) {
   // 两段式确认：第一下只把这一行变成「确认删除？」，第二下才真删。
   // 比 window.confirm 好在：不用弹窗、手指不用来回移动、误触也能退出。
   const [pending, setPending] = useState<number | null>(null);
@@ -161,6 +172,19 @@ function ConversationList({ items, activeId, onSelect, onCreate, onCreateWithCwd
           );
         })}
       </div>
+
+      {onOpenMemory && (
+        <div className="shrink-0 px-2 pb-1 pt-1">
+          <button
+            type="button"
+            onClick={onOpenMemory}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <Brain className="size-3.5 opacity-70" aria-hidden />
+            全局记忆
+          </button>
+        </div>
+      )}
 
       {/*
        * 版本戳。排查「手机上是不是旧版」时不用再跑去查接口：

@@ -129,6 +129,13 @@ export interface MemoryEntry {
   updatedAt: number;
 }
 
+/** `GET /api/memory` 的响应：全部条目 + 实际注入的条数（受预算限制）。 */
+export interface MemorySnapshot {
+  entries: MemoryEntry[];
+  injected: number;
+  budgetChars: number;
+}
+
 /** `listConversations()` 的投影。标题来自第一条用户消息，不是落库字段。 */
 export interface ConversationSummary {
   id: number;

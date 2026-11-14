@@ -142,6 +142,46 @@ Compose v2 走自己内置的 BuildKit，不依赖该 CLI 插件，所以构建�
 **实测**：同一份代码构建 **1 秒、11 层 CACHED**（原来 2622 秒）；
 `pii:server` 与运行中的容器全程未被触碰。
 
+## 备份（cron）
+
+`deploy/backup.sh` 三件事：每日轻量、每周全量、校验。
+
+```bash
+./backup.sh daily     # SQLite 快照 + *.json + auth-token（不含 images/ archive/）
+./backup.sh weekly    # 上面那些 + images/ + archive/
+./backup.sh verify    # 校验最新一份 daily
+```
+
+两个刻意的设计：
+
+- **先写 `.tmp`，校验通过才改名**：目录里不会出现"看着像备份、其实打不开"的文件；
+- **SQLite 用 `VACUUM INTO`**：直接 `cp` 正在写的库可能撕裂（WAL 半截）。
+
+装到宿主机（cron 调用仓库里的脚本，`git pull` 后自动生效）：
+
+```cron
+15 4 * * * /srv/pii-src/deploy/backup.sh daily  >> /var/log/pii-backup.log 2>&1
+45 4 * * 0 /srv/pii-src/deploy/backup.sh weekly >> /var/log/pii-backup.log 2>&1
+```
+
+默认落在 `/opt/pii-test/backups/scheduled/{daily,weekly}/`，daily 留 14 份、weekly 留 4 份。
+
+**恢复演练**（没验证过的备份不算备份）：
+
+```bash
+mkdir -p /tmp/pii-restore && tar xzf /opt/pii-test/backups/scheduled/daily/pii-XXXX.tgz -C /tmp/pii-restore
+docker run --rm -v /tmp/pii-restore:/restore:ro --entrypoint node pii:server -e '
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync("/restore/agent.sqlite", { readOnly: true });
+  console.log(db.prepare("select count(*) n from entries").get());
+  db.close();'
+```
+
+真恢复 = 停容器 → 把 `/data` 挪走 → 把包解开到 `/data` → `docker compose up -d`。
+
+> 注意：`pii-deploy` 在切换镜像前也会备份 `agent.sqlite*` 到 `/opt/pii-test/backups/<时间戳>/`，
+> 但那**只有 sqlite**，且只在部署时发生 —— 日常数据安全靠上面这条 cron。
+
 ## 自我更新（手机上让 pii 改自己）
 
 **设计原则：pii 不能自己执行 docker / 不能自己重启自己** —— 否则它写错一行代码就把自己搞死，而那时已经没人能修了。执行权留在宿主机。

@@ -24,6 +24,7 @@ import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
 import { imageRefExtension } from "./tools/image-ref.ts";
 import { notifyExtension } from "./tools/notify.ts";
+import { webExtension } from "./tools/web.ts";
 
 export interface AgentOptions {
   /** 数据目录；默认 ~/.pii */
@@ -107,6 +108,10 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
   }
   // 全局记忆：不进对话条目，每轮请求前作为 system section 渲染；有工具时再装 memory 工具
   if (options.memory) registry.install(memoryExtension(options.memory, { tool: withTools }));
+  // 联网搜索：默认走必应 RSS（免 key）；配了 key 换博查；PII_SEARCH=off 不装
+  if (withTools && config.searchEnabled) {
+    registry.install(webExtension(config.searchKey ? { apiKey: config.searchKey } : {}));
+  }
   // 归档：上下文被压缩之前，先把被替换的原文落盘（只增不改）
   registry.install(
     archiveExtension({

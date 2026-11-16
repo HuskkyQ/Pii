@@ -109,6 +109,8 @@ npm run dev:web                          # 终端 B：Vite :5173，/api 代理�
 | `PII_APPROVAL_TIMEOUT_MS` | `120000` | 一次工具审批最多挂多久；超时按**拒绝**处理（fail-closed）。人不在手机旁时可以调大 |
 | `PII_SNAPSHOT_TURNS` | `5` | 每帧快照带最近几**轮**对话（一轮 = 用户 + 助手）；更早的用 `?before` 翻 |
 | `PII_THINKING` | 不设 | 设成 `low`/`medium`/`high` 才会出现思考块 |
+| `PII_SEARCH_KEY` | 不设 | 博查搜索 API key。设了走博查；不设走必应 RSS（免 key） |
+| `PII_SEARCH` | 开 | `off` 关闭联网搜索（`web_search` / `web_fetch` 都不装） |
 | `PII_PUSH` | 开 | `0` 关闭推送（不生成密钥、不发送） |
 | `PII_VAPID_SUBJECT` | `mailto:pii@localhost` | VAPID 的联络人；部分推送服务会校验 |
 
@@ -1022,6 +1024,44 @@ curl -X DELETE https://piihub.icu/api/memory/1
 手机在抽屉底部同一位置。面板顶部显示「注入 N / M 条 · 预算 X 字」，
 数字来自服务端（预算规则只有一份）。
 现状与后续计划见 [`docs/全局记忆设计.md`](全局记忆设计.md)。
+
+## 联网搜索（`web_search` / `web_fetch`）
+
+实现在 `src/tools/web.ts`，两个供应商，按有没有 key 自动选：
+
+| 供应商 | 触发条件 | 结果数 | 时间过滤 | 成本 |
+|---|---|---|---|---|
+| **必应 RSS** | 默认（无需任何配置） | 固定 10 | 无 | 免费 |
+| **博查** | 配了 `PII_SEARCH_KEY` | 1-15（`count`） | `freshness` | 按次计费 |
+
+`PII_SEARCH=off` 两个都不装 —— 断网环境或不想让它上网时用。
+
+**必应这条路是「能用但不稳」**：它是个非官方接口（`cn.bing.com/search?q=…&format=rss`），
+常见的两三个词的中文查询结果不错（「阿里云盘 价格」「claude code 使用教程」都正常），
+但**生僻品牌词 + 英文混排会整段崩掉** —— 实测「博查搜索 API」返回的是「博」字字典条目，
+换成「博查搜索」或「博查AI开放平台」就正常。模型自己能看出不对并换词重搜，
+但别指望它每次都对。质量不够就配 key 换博查，代码不用改。
+
+**为什么是两个工具**：搜索只回「标题 + 链接 + 摘要」，正文要单独抓。
+8 条结果全带正文 ≈ 24000 字，其中 7 条是噪音；拆成两步后模型自己挑 1-3 条去抓，
+同样的信息量只花 1/6 的 token。这是「search → select → fetch」，不是一次性 RAG。
+
+**审批**：`web_search` 在 `policies.ts` 的 `ALWAYS_ALLOWED` 里，免审批（只读、一个任务调好几次）。
+`web_fetch` 故意**不**在里面 —— 它能把数据带到任意外部地址，先让用户看一阵子它都抓了哪些域名。
+
+**SSRF 防护**（`web_fetch` 的硬要求）：容器里 `http://127.0.0.1:8443` 就是 pii 自己，
+`169.254.169.254` 是云厂商元数据（能读到实例凭证）。`checkUrl()` 先查字面地址，
+**再查 DNS 解析结果**（`127.0.0.1.nip.io` 这类域名绕不过去），重定向手动跟、
+每一跳重新检查，最多 3 跳。
+
+其余上限：正文 8000 字、响应体 2MB、超时 15 秒、非 `text/*` 直接拒绝。
+
+```bash
+npm start                                    # 必应（免 key）
+PII_SEARCH_KEY=<博查 key> npm start           # 博查
+PII_SEARCH=off npm start                      # 都不装
+# 然后问：「搜一下阿里云盘的价格，把前三条链接给我」
+```
 
 ## 手机 + PWA（阶段 4）
 

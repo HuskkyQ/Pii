@@ -58,6 +58,10 @@ export interface PiiConfig {
   passHash: string;
   tokenHintEnv: string;
   keepAwake: boolean;
+  /** 博查搜索 API key。配了走博查，没配走必应 RSS（免 key）。 */
+  searchKey: string | undefined;
+  /** `PII_SEARCH=off` 时连必应也不装 —— 断网环境或不想让它上网时用。 */
+  searchEnabled: boolean;
   /** SIGINT/SIGTERM 后最多等多久让正在跑的会话结束；0 = 立刻退。 */
   shutdownIdleMs: number;
   /** 停止接受新连接后，给已有连接（含长连 SSE）收尾的窗口，超时硬断。 */
@@ -95,6 +99,8 @@ export function loadConfig(): PiiConfig {
     passHash: (process.env.PII_PASS_HASH ?? "").trim(),
     tokenHintEnv: (process.env.PII_TOKEN_HINT ?? "").trim(),
     keepAwake: process.env.PII_KEEP_AWAKE !== "0",
+    searchKey: process.env.PII_SEARCH_KEY?.trim() || undefined,
+    searchEnabled: process.env.PII_SEARCH !== "off",
     // 这两个和编排的 stop_grace_period 是一套账：idle + grace 必须小于它，
     // 否则 docker 会在我们还在收尾时直接 SIGKILL。见 deploy/docker-compose.server.yml。
     shutdownIdleMs: Number(process.env.PII_SHUTDOWN_IDLE_MS ?? 10_000),

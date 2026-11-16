@@ -38,6 +38,15 @@ export {
 /** 存策略的文件名。老名字叫 TITLES_FILE（复制来的），其实是 policy —— 顺手改名。 */
 const POLICIES_FILE = "conversation-policies.json";
 
+/**
+ * 永远免审批的工具。
+ *
+ * `web_search` 只读、无副作用，一个任务里要连着调好几次，每次弹卡片纯属打扰。
+ * `web_fetch` **故意不在这里** —— 它能把数据带到任意外部地址（prompt injection 的
+ * 出口），先让用户看一阵子它都抓了哪些域名再说。
+ */
+const ALWAYS_ALLOWED = new Set(["web_search"]);
+
 function clonePolicy(policy: Policy): Policy {
   return { auto: { ...policy.auto }, allowUnknown: policy.allowUnknown };
 }
@@ -133,6 +142,7 @@ export class Policies {
 
   /** 给 broker 用：这个会话的这个工具是否自动放行。 */
   shouldAutoAllow(conversationId: number, tool: string): boolean {
+    if (ALWAYS_ALLOWED.has(tool)) return true;
     const policy = this.effective(conversationId);
     if ((KNOWN_TOOLS as readonly string[]).includes(tool)) return policy.auto[tool as KnownTool];
     return policy.allowUnknown;

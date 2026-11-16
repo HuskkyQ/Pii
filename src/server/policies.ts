@@ -108,6 +108,32 @@ function writeAll(dataDir: string, map: Record<string, Policy>): void {
   writeJsonAtomic(join(dataDir, POLICIES_FILE), sorted);
 }
 
+/**
+ * 沿 `owner` 链找到「用户会话」：第一个没有 owner 的会话。
+ *
+ * 为什么需要：子 agent 的会话挂在派它的那次工具调用名下（见 tools/subagent.ts），
+ * 它自己从没在界面上配过策略，界面上也看不到它的审批卡。所以：
+ *  - 审批：卡片要记在父会话名下，否则推给谁都不知道，120 秒后按拒绝处理；
+ *  - 策略：用父会话的「哪些工具免问」来判断。
+ *
+ * 查询函数注入进来（生产用 `storage.conversation`，测试用假数据）；
+ * 深度上限防数据坏了造成死循环，走到头就停在最深的那一层。
+ */
+export async function resolveUserConversation(
+  conversationId: number,
+  recordOf: (id: number) => Promise<{ owner?: { conversationId: number } } | undefined>,
+  maxDepth = 8,
+): Promise<number> {
+  let id = conversationId;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const record = await recordOf(id);
+    const parent = record?.owner?.conversationId;
+    if (parent === undefined) return id;
+    id = Number(parent);
+  }
+  return id;
+}
+
 /** 会话策略表。启动时读一次，之后一直在内存里。 */
 export class Policies {
   #dataDir: string;

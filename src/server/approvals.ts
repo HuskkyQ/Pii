@@ -36,6 +36,14 @@ export interface ApprovalBrokerOptions {
    * 覆盖上面的全局 autoAllow —— 这是「按会话配置审批策略」的挂接点。
    */
   shouldAutoAllow?: (conversationId: number, tool: string) => boolean;
+  /**
+   * 把发起方会话映射成「用户看得见的那个会话」。
+   *
+   * 子 agent 的会话是任务所有（`record.owner`），父界面的 SSE 只收当前会话的审批，
+   * 如果按子会话 id 记，卡片推给谁都不知道，120 秒后按拒绝处理 —— 子 agent 就那么卡死。
+   * 映射到父会话后：卡片弹在用户正在看的界面上，策略也按父会话算。
+   */
+  resolveConversation?: (conversationId: number) => number | Promise<number>;
 }
 
 export class ApprovalBroker implements ApprovalPort {
@@ -45,10 +53,12 @@ export class ApprovalBroker implements ApprovalPort {
   readonly timeoutMs: number;
   readonly autoAllow: ReadonlySet<string>;
   #shouldAutoAllow?: (conversationId: number, tool: string) => boolean;
+  #resolveConversation?: (conversationId: number) => number | Promise<number>;
 
   constructor(options: ApprovalBrokerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.#shouldAutoAllow = options.shouldAutoAllow;
+    this.#resolveConversation = options.resolveConversation;
     /* `?? "read"` 这层回退留在调用点：和 policies.ts 的 DEFAULT_PRESET 不是同一回事。 */
     this.autoAllow = new Set(
       options.autoAllow ?? (loadConfig().autoAllowEnv ?? "read").split(",").map((s) => s.trim()),
@@ -62,20 +72,28 @@ export class ApprovalBroker implements ApprovalPort {
   }
 
   /** hook 调用这个：挂起，直到前端回答或超时。 */
-  request(input: {
+  async request(input: {
     conversationId: number;
     callId: string;
     tool: string;
     input: unknown;
   }): Promise<ApprovalOutcome> {
-    if (this.#shouldAutoAllow ? this.#shouldAutoAllow(input.conversationId, input.tool) : this.autoAllow.has(input.tool)) {
-      return Promise.resolve({ id: "auto", allow: true, reason: "user" });
+    /*
+     * 先把「谁在申请」映射成「用户看得见谁」：子 agent 的会话映射到它的父会话。
+     * 一步到位 —— 后面的策略判断、挂起、推送、SSE 补发全都用这一个 id。
+     */
+    const conversationId = this.#resolveConversation
+      ? await this.#resolveConversation(input.conversationId)
+      : input.conversationId;
+
+    if (this.#shouldAutoAllow ? this.#shouldAutoAllow(conversationId, input.tool) : this.autoAllow.has(input.tool)) {
+      return { id: "auto", allow: true, reason: "user" };
     }
 
     const now = Date.now();
     const request: ApprovalRequest = {
       id: randomUUID(),
-      conversationId: input.conversationId,
+      conversationId,
       callId: input.callId,
       tool: input.tool,
       input: input.input,

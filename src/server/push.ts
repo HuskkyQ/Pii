@@ -47,6 +47,11 @@ export interface PushHubOptions {
   dataDir: string;
   /** 有人正开着这个会话时跳过推送 —— 你已经在看了，不用再响一次。 */
   isWatched?: (conversationId: number | undefined) => boolean;
+  /**
+   * 这是 agent 的内部工作区（子 agent 会话）吗？是就不推。
+   * 子 agent 的「回答完成」不是用户等的那件事，推了只会一直响。
+   */
+  isInternal?: (conversationId: number | undefined) => boolean | Promise<boolean>;
 }
 
 const VAPID_FILE = "vapid.json";
@@ -89,6 +94,7 @@ function writeJson(path: string, value: unknown): void {
 export class PushHub implements PushPort {
   #dataDir: string;
   #isWatched: (conversationId: number | undefined) => boolean;
+  #isInternal: (conversationId: number | undefined) => boolean | Promise<boolean>;
   #keys: VapidKeys | undefined;
   #subs = new Map<string, PushSubscriptionRecord>();
   #enabled: boolean;
@@ -97,6 +103,7 @@ export class PushHub implements PushPort {
     const config = loadConfig();
     this.#dataDir = options.dataDir;
     this.#isWatched = options.isWatched ?? (() => false);
+    this.#isInternal = options.isInternal ?? (() => false);
     this.#enabled = config.pushEnabled;
 
     this.#keys = this.#loadOrCreateKeys();
@@ -184,6 +191,7 @@ export class PushHub implements PushPort {
     const result: PushResult = { sent: 0, pruned: 0, failed: 0 };
     if (!this.#enabled || this.#subs.size === 0) return result;
     if (this.#isWatched(payload.conversationId)) return result;
+    if (await this.#isInternal(payload.conversationId)) return result;
 
     const body = JSON.stringify({
       id: randomUUID(),

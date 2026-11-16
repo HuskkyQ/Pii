@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Conversation } from "@earendil-works/pi-durable";
+import type { Conversation, ConversationId } from "@earendil-works/pi-durable";
 
 import type { Agent } from "../agent.ts";
 import { openAgent } from "../agent.ts";
@@ -27,7 +27,7 @@ import { keepAwake, type AwakeHandle } from "./awake.ts";
 import { openTaskQueries, type RunFailure } from "./db/tasks.ts";
 import { acquireLock } from "./db/lock.ts";
 import { LastConversation } from "./last-conversation.ts";
-import { Policies, defaultPolicy, presetOf } from "./policies.ts";
+import { Policies, defaultPolicy, presetOf, resolveUserConversation } from "./policies.ts";
 import { PushHub } from "./push.ts";
 import { Titles } from "./titles.ts";
 import { Trash, purgeConversations } from "./trash.ts";
@@ -165,9 +165,28 @@ export async function createContext(): Promise<AppContext> {
   const policies = new Policies(dataDir);
   /** 上次在看的会话（前端 localStorage 的兜底）。 */
   const lastConversation = new LastConversation(dataDir);
+  /**
+   * 子 agent 的会话 → 它所属的用户会话。
+   *
+   * 子 agent 在 `record.owner` 里挂着派它的那次工具调用，所以沿链上溯就能找到
+   * 用户正在看的那个会话（实现和测试在 policies.ts 的 `resolveUserConversation`）。
+   * 审批卡、审批策略、推送都按这个「用户会话」来算。
+   */
+  async function userConversationOf(conversationId: number): Promise<number> {
+    return resolveUserConversation(conversationId, async (id) => {
+      try {
+        return await agent.storage.conversation(id as ConversationId, BACKGROUND_CONTEXT);
+      } catch {
+        /* 读不到就当它没有 owner（按用户会话处理，fail-safe） */
+        return undefined;
+      }
+    });
+  }
+
   const approvals = new ApprovalBroker({
     timeoutMs: config.approvalTimeoutMs,
     shouldAutoAllow: (conversationId, tool) => policies.shouldAutoAllow(conversationId, tool),
+    resolveConversation: (conversationId) => userConversationOf(conversationId),
   });
 
   /**
@@ -210,6 +229,12 @@ export async function createContext(): Promise<AppContext> {
   const push = new PushHub({
     dataDir,
     isWatched: (conversationId) => conversationId !== undefined && (watching.get(conversationId) ?? 0) > 0,
+    /*
+     * 子 agent 的会话不推：它回答完不是用户等的那件事。
+     * 判据是「上溯到的用户会话和它自己不是同一个」—— 审批卡已经映射到父会话了，所以不受影响。
+     */
+    isInternal: async (conversationId) =>
+      conversationId !== undefined && (await userConversationOf(conversationId)) !== conversationId,
   });
 
   // 审批要人在场才能继续，所以“有人要点头了”比“跑完了”更该推。

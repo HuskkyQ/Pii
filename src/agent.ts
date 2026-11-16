@@ -24,6 +24,7 @@ import { archiveExtension } from "./tools/archive-hook.ts";
 import { approvalExtension } from "./tools/approval.ts";
 import { imageRefExtension } from "./tools/image-ref.ts";
 import { notifyExtension } from "./tools/notify.ts";
+import { subagentExtension } from "./tools/subagent.ts";
 import { webExtension } from "./tools/web.ts";
 
 export interface AgentOptions {
@@ -92,8 +93,25 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
   const imageDir = join(dataDir, "images");
   const withImageRef = config.imageRef;
 
+  /*
+   * 子 agent 的 `subagent` 工具要一个「已经打开的 Harness」，而扩展只能在 Harness.open 之前装。
+   * 用一个延迟读取的引用错开这两件事：工具真正执行时，current 早就填上了。
+   */
+  const harnessRef: { current?: Harness } = {};
+
   const registry = createRegistry();
   if (withTools) registry.install(CodingTools);
+  // 多 agent：模型能把一件独立的活派给一个干净上下文的子会话，只拿回最终答案
+  if (withTools) {
+    registry.install(
+      subagentExtension({
+        getHarness: () => {
+          if (!harnessRef.current) throw new Error("subagent 在 Harness 打开之前被调用了");
+          return harnessRef.current;
+        },
+      }),
+    );
+  }
   if (withTools && options.approvals) registry.install(approvalExtension(options.approvals));
   // 图片外置：base64 不进上下文，只留路径标记；模型需要时用 read 打开
   if (withImageRef) {
@@ -149,6 +167,7 @@ export async function openAgent(options: AgentOptions = {}): Promise<Agent> {
     },
     BACKGROUND_CONTEXT,
   );
+  harnessRef.current = harness;
 
   const root = await harness.root(BACKGROUND_CONTEXT, {
     agent: { model: { provider, modelId }, cwd },

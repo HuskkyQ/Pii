@@ -13,7 +13,9 @@ import test from "node:test";
 import { archiveEntries } from "../src/archive.ts";
 import { safeNext } from "../src/server/auth-routes.ts";
 import { parseConversationId } from "../src/server/conversations.ts";
-import { normalizePolicy } from "../src/server/policies.ts";
+import { normalizePolicy, resolveUserConversation } from "../src/server/policies.ts";
+import { ApprovalBroker } from "../src/server/approvals.ts";
+import { SubagentGate } from "../src/tools/subagent.ts";
 import { projectEntries, projectView } from "../src/server/project.ts";
 
 function fakeView(entries: unknown[]) {
@@ -146,4 +148,83 @@ test("projectEntries: 工具结果按 toolCallId 并进 toolCall", () => {
     assert.equal(block.name, "bash");
     assert.equal(block.result, "file.txt");
   }
+});
+
+test("resolveUserConversation: 沿 owner 链上溯到用户会话", async () => {
+  const records = new Map<number, { owner?: { conversationId: number } } | undefined>([
+    [1, undefined],
+    [13, { owner: { conversationId: 1 } }],
+    [27, { owner: { conversationId: 13 } }],
+  ]);
+  const recordOf = async (id: number) => records.get(id);
+
+  assert.equal(await resolveUserConversation(1, recordOf), 1);
+  assert.equal(await resolveUserConversation(13, recordOf), 1);
+  assert.equal(await resolveUserConversation(27, recordOf), 1);
+  // 查不到的会话原样返回：一次读失败不该把审批挂到别人名下
+  assert.equal(await resolveUserConversation(404, recordOf), 404);
+});
+
+test("ApprovalBroker: 子会话的审批按父会话策略判断，并记在父会话名下", async () => {
+  const broker = new ApprovalBroker({
+    timeoutMs: 50,
+    shouldAutoAllow: (conversationId, tool) => conversationId === 1 && tool === "read",
+    resolveConversation: async (conversationId) => (conversationId === 13 ? 1 : conversationId),
+  });
+
+  // 子会话的 read：按父会话策略 → 自动放行
+  const auto = await broker.request({ conversationId: 13, callId: "c1", tool: "read", input: {} });
+  assert.equal(auto.allow, true);
+
+  // 子会话的 write：要问，而且卡片必须记在父会话名下（否则前端 SSE 收不到，120 秒后变拒绝）
+  const pending = broker.request({ conversationId: 13, callId: "c2", tool: "write", input: {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(broker.list(13).length, 0);
+  const cards = broker.list(1);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0]!.conversationId, 1);
+  assert.equal(cards[0]!.tool, "write");
+
+  broker.settle(cards[0]!.id, true);
+  assert.equal((await pending).allow, true);
+  broker.dispose();
+});
+
+test("SubagentGate: 超过上限排队，释放后按顺序放行，不同父会话互不影响", async () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const gate = new SubagentGate(2);
+  const order: string[] = [];
+
+  await gate.acquire(1);
+  await gate.acquire(1);
+  assert.equal(gate.running(1), 2);
+
+  // 第三、第四个只能排队
+  const third = gate.acquire(1).then(() => void order.push("third"));
+  const fourth = gate.acquire(1).then(() => void order.push("fourth"));
+  await tick();
+  assert.deepEqual(order, []);
+  assert.equal(gate.running(1), 2);
+
+  // 释放一个：名额转交给队首，正在跑的数量不变（不会超上限）
+  gate.release(1);
+  await tick();
+  assert.deepEqual(order, ["third"]);
+  assert.equal(gate.running(1), 2);
+
+  gate.release(1);
+  await tick();
+  assert.deepEqual(order, ["third", "fourth"]);
+
+  // 另一个父会话有自己的闸
+  await gate.acquire(2);
+  assert.equal(gate.running(2), 1);
+
+  gate.release(1);
+  gate.release(1);
+  gate.release(2);
+  assert.equal(gate.running(1), 0);
+  assert.equal(gate.running(2), 0);
+
+  await Promise.all([third, fourth]);
 });

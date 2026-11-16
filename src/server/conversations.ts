@@ -83,6 +83,12 @@ export async function listConversations(
     const id = Number(record.id);
     // 被删掉的会话不列出来
     if (hidden(id)) continue;
+    /*
+     * 子 agent 的会话：`owner` 指向派它的那次工具调用。
+     * 那是 agent 的内部工作区（有自己的工具调用和中间过程），不该混进用户的侧边栏。
+     * 想看它的过程可以用 `details.conversationId` 直接打开。
+     */
+    if (record.owner) continue;
     const conversation = await agent.harness.conversation(record.id, BACKGROUND_CONTEXT);
     if (!conversation) continue;
     summaries.push({ id, title: customTitle(id) ?? (await titleOf(conversation)), busy: busy.has(id) });

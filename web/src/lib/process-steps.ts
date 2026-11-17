@@ -34,6 +34,10 @@ export type RailStep =
       isError?: boolean;
       durationMs?: number;
       status: "pending" | "running" | "done";
+      /** 运行中的输出尾巴（subagent 用它显示子 agent 在干什么） */
+      output?: string;
+      /** 工具返回的结构化信息（子会话 id / token / 花费） */
+      details?: unknown;
     };
 
 /**
@@ -72,6 +76,7 @@ export function stepsFromEntries(
             isError: block.isError,
             durationMs: block.durationMs,
             status: "done",
+            ...(block.details === undefined ? {} : { details: block.details }),
           });
           break;
         case "toolResult":
@@ -126,6 +131,7 @@ export function stepsFromLive(live: LiveView): RailStep[] {
       name: tool.name,
       input: null,
       status: tool.status,
+      ...(tool.output === undefined ? {} : { output: tool.output }),
     });
   });
 

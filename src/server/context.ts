@@ -21,7 +21,7 @@ import { openAgent } from "../agent.ts";
 import { loadConfig, resolveArchiveDir, resolveDataDir } from "../config.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
-import { openConversation } from "./conversations.ts";
+import { openConversation, orphanSubagentIds } from "./conversations.ts";
 import { createAuth, type Auth } from "./auth.ts";
 import { keepAwake, type AwakeHandle } from "./awake.ts";
 import { openTaskQueries, type RunFailure } from "./db/tasks.ts";
@@ -254,6 +254,27 @@ export async function createContext(): Promise<AppContext> {
     memory,
     titleOf: (conversationId) => titles.get(conversationId),
   });
+  /*
+   * 启动时清一次「孤儿子会话」：`owner` 指向的父会话已经不在了的那些。
+   *
+   * 以前删父会话不回删子会话，库里会攒下一堆没人认领的子 agent 会话（不占 CPU，
+   * 但一直占磁盘、谁也看不见）。这里只清没有活会话的 —— 有任务在跑的留给调度器。
+   * 失败不影响启动：下次再扫。
+   */
+  try {
+    const inspection = await agent.harness.inspect(BACKGROUND_CONTEXT);
+    const busy = new Set(inspection.tasks.map((task) => Number(task.record.conversationId)));
+    const orphans = (await orphanSubagentIds(agent)).filter((id) => !busy.has(id));
+    if (orphans.length > 0) {
+      const purged = purgeConversations({ dbPath: agent.dbPath, ids: orphans });
+      if (purged.deleted.length > 0) {
+        console.log(`  清理      删除 ${purged.deleted.length} 个孤儿子会话`);
+      }
+    }
+  } catch (error) {
+    console.warn(`  清理      孤儿子会话扫不动（下次启动再试）：${(error as Error).message}`);
+  }
+
   console.log(`pii 启动中…`);
   console.log(`  数据目录  ${dirname(agent.dbPath)}`);
   console.log(`  模型      ${agent.provider}/${agent.modelId}`);

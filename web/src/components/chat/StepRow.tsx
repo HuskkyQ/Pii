@@ -184,7 +184,19 @@ function ToolStep({ step }: { step: Extract<RailStep, { kind: "tool" }> }) {
       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
   );
 
-  if (!interactive) return <div className={tone}>{row}</div>;
+  if (!interactive) {
+    return (
+      <div>
+        <div className={tone}>{row}</div>
+        {/* 运行中的输出预览：subagent 靠它显示子 agent 正在跑什么 */}
+        {step.output && (
+          <pre className="line-clamp-2 whitespace-pre-wrap break-words pl-6 pr-1 font-mono text-[11px] leading-relaxed text-muted-foreground/60">
+            {step.output}
+          </pre>
+        )}
+      </div>
+    );
+  }
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -215,6 +227,15 @@ function ToolStep({ step }: { step: Extract<RailStep, { kind: "tool" }> }) {
               >
                 {step.result}
               </pre>
+            </>
+          )}
+
+          {detailsLine(step.details) && (
+            <>
+              <div className="border-t border-border/40" />
+              <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground/60">
+                {detailsLine(step.details)}
+              </div>
             </>
           )}
         </div>
@@ -288,6 +309,28 @@ function CopyMini({ text }: { text: string }) {
       {copied ? <Check className="size-3.5 md:size-3" /> : <Copy className="size-3.5 md:size-3" />}
     </button>
   );
+}
+
+/**
+ * 工具的结构化信息（目前只有 subagent 会带）：子会话 id、token、花费。
+ * 这些不进模型上下文，只让「点开工具详情」的人知道这笔活是谁干的、花了多少。
+ */
+function detailsLine(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const d = details as {
+    conversationId?: unknown;
+    tokens?: unknown;
+    cost?: unknown;
+    timedOut?: unknown;
+  };
+  if (typeof d.conversationId !== "number") return null;
+  const parts = [`子会话 #${d.conversationId}`];
+  if (typeof d.tokens === "number" && d.tokens > 0) {
+    parts.push(`${d.tokens >= 1000 ? `${(d.tokens / 1000).toFixed(1)}k` : d.tokens} tokens`);
+  }
+  if (typeof d.cost === "number" && d.cost > 0) parts.push(`$${d.cost.toFixed(4)}`);
+  if (d.timedOut === true) parts.push("超时中止");
+  return parts.join(" · ");
 }
 
 /** 折叠行上显示的命令摘要：bash 取 command，其余取常见字段，最后退回 JSON。 */

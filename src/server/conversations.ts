@@ -9,7 +9,7 @@
  * 不属于某个后台任务（任务视图 owns 的会话会在任务结束时长出来，不在这里）。
  */
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Conversation, ConversationId } from "@earendil-works/pi-durable";
+import type { Conversation, ConversationId, ConversationRecord, Cursor } from "@earendil-works/pi-durable";
 
 import type { Agent } from "../agent.ts";
 
@@ -129,6 +129,52 @@ export async function createConversation(agent: Agent): Promise<Conversation> {
     },
     BACKGROUND_CONTEXT,
   );
+}
+
+/** 翻完全部会话（分页游标来自存储层，调用方不用关心怎么翻）。 */
+async function allConversations(agent: Agent): Promise<ConversationRecord[]> {
+  const records: ConversationRecord[] = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await agent.storage.scanConversations(
+      { order: "ascending" },
+      500,
+      cursor,
+      BACKGROUND_CONTEXT,
+    );
+    records.push(...page.items);
+    cursor = page.next;
+  } while (cursor !== undefined);
+  return records;
+}
+
+/** 某个会话派出去的子 agent 会话 id（`owner` 指向它）。删父会话时一起删。 */
+export async function subagentIdsOf(agent: Agent, conversationId: number): Promise<number[]> {
+  const page = await agent.storage.scanConversations(
+    { ownerConversationId: conversationId as ConversationId, order: "ascending" },
+    500,
+    undefined,
+    BACKGROUND_CONTEXT,
+  );
+  return page.items.map((record) => Number(record.id));
+}
+
+/**
+ * 孤儿会话：`owner` 指向的父会话已经不在了。
+ *
+ * 以前删父会话不回删子会话（purge 只按传入的 id 删），于是库里会攒下一堆
+ * 「没人认领的办公室」：不占 CPU、不进列表，但一直占着磁盘。
+ * 启动时扫一遍清掉。
+ */
+export async function orphanSubagentIds(agent: Agent): Promise<number[]> {
+  const records = await allConversations(agent);
+  const ids = new Set(records.map((record) => Number(record.id)));
+  return records
+    .filter((record) => {
+      const owner = record.owner?.conversationId;
+      return owner !== undefined && !ids.has(Number(owner));
+    })
+    .map((record) => Number(record.id));
 }
 
 /** 把 `?c=<id>` 解析成会话 id；非法就当没传（走 root）。 */

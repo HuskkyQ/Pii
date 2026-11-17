@@ -9,7 +9,7 @@
  * 于是父会话 abort 时，子会话的 run 会顺着 ownership 树一起被撤；
  * 而子会话有自己的上下文、模型、工作目录 —— 上下文隔离和并行都从这里来。
  *
- * 五条纪律：
+ * 六条纪律：
  *  1. **只回最终答案**：子 agent 的中间过程留在它自己的会话里，父会话只拿到一段结论，
  *     否则「省上下文」这件事就白做了。
  *  2. **崩溃后复用，不重开**：工具标了 `replay: "safe"`，进程崩了重跑时用 `memo` 里记的
@@ -20,6 +20,9 @@
  *  5. **任务是一份契约**：goal / deliverable / materials / acceptance / constraints。
  *     子 agent 看不到父的对话、也不能反问，所以任务必须自足；
  *     材料优先给路径（共享 cwd，它自己能读），不要把大段内容贴进 prompt。
+ *  6. **有上限地跑**：超时（默认 5 分钟）会真的 `abort` 子会话，不然它会占着并发名额烧 token；
+ *     `readOnly` 把工具裁到只剩 `read`（话术挡不住越权，工具集才挡得住）；
+ *     进度写进 `api.output()` —— 父界面上能看到它在第几轮跑什么，而这些不会进父的模型上下文。
  */
 import {
   AssistantEntry,
@@ -28,7 +31,7 @@ import {
   type ConversationId,
   type Harness,
 } from "@earendil-works/pi-durable";
-import { num, obj, opt, str } from "@earendil-works/pi-schema";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 
 export interface SubagentOptions {
   /**
@@ -42,6 +45,100 @@ export interface SubagentOptions {
 
 /** 工具在 memo 里记子会话 id 的键名（同一次工具调用在重启后重跑时用得上）。 */
 const MEMO_KEY = "subagent.conversation";
+
+/**
+ * 子 agent 的默认时限。
+ *
+ * 没有它，一个卡住的子 agent 会把父会话永久挂起（父在 `submission.wait()` 上等），
+ * 而且它一直握着并发闸的名额 —— 3 个卡死的子 agent 就能让后面所有委派永远排队。
+ * 超时不是"取消等待"，是真的 `handle.abort()` 把子会话停掉。
+ */
+const DEFAULT_TIMEOUT_MS = 5 * 60_000;
+const MIN_TIMEOUT_MS = 5_000;
+const MAX_TIMEOUT_MS = 30 * 60_000;
+
+/** `subagent` 返回给 UI 的结构化信息（界面上显示"这是哪个子会话、花了多少"）。 */
+type SubagentDetails = {
+  conversationId: number;
+  /** 子会话消耗的 token 总数（含缓存读写；读 usage 时拿到多少算多少） */
+  tokens?: number;
+  /** 子会话的花费（provider 报了才有） */
+  cost?: number;
+  /** 超时被中止 */
+  timedOut?: boolean;
+  /** 没有答案时的原因 */
+  error?: string;
+};
+
+/**
+ * 造 details。
+ *
+ * 为什么不直接写字面量：`details` 要满足 JsonValue，而可选字段在字面量里会带
+ * `undefined`（`{timedOut?: undefined}`），过不了索引签名。这里只放真正有值的键。
+ */
+function detailsOf(input: SubagentDetails): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = { conversationId: input.conversationId };
+  if (input.tokens !== undefined) out.tokens = input.tokens;
+  if (input.cost !== undefined) out.cost = input.cost;
+  if (input.timedOut !== undefined) out.timedOut = input.timedOut;
+  if (input.error !== undefined) out.error = input.error;
+  return out;
+}
+
+/** 等一个 promise，超时返回 "timeout"（调用方负责真正中止子会话）。 */
+export async function waitWithDeadline<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  /*
+   * 不 unref：这个定时器就是「这次工具调用还活着」的唯一凭据。
+   * unref 掉的话，事件循环没有别的句柄时会直接退出，超时永远不触发（测试里表现为
+   * "Promise resolution is still pending but the event loop has already resolved"）。
+   */
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    // 超时之后那个 wait 还在飞：吞掉它后面可能的 rejection，别变成 unhandledRejection
+    void promise.catch(() => undefined);
+  }
+}
+
+/** 子会话 `pi.live` → 一行进度（第几轮、在跑什么工具）。 */
+function summarizeLive(raw: unknown): string | null {
+  const live = raw as
+    | { run?: { turns?: number }; tools?: { name?: unknown; status?: unknown }[] }
+    | undefined;
+  if (!live) return null;
+  const running = (live.tools ?? []).filter(
+    (tool) => tool.status === "running" || tool.status === "pending",
+  );
+  const names = [...new Set(running.map((tool) => (typeof tool.name === "string" ? tool.name : "tool")))];
+  const turns = typeof live.run?.turns === "number" ? `第 ${live.run.turns + 1} 轮 · ` : "";
+  return names.length === 0 ? `${turns}正在生成` : `${turns}正在跑 ${names.join(" / ")}`;
+}
+
+/** `pi.usage` → token / 花费合计（子 agent 的钱记在它自己的会话里，父会话看不到）。 */
+function usageTotals(raw: unknown): { tokens: number; cost: number } | null {
+  const state = raw as
+    | {
+        models?: Record<string, { totalTokens?: unknown; cost?: { total?: unknown } }>;
+        tools?: Record<string, { totalTokens?: unknown }>;
+      }
+    | undefined;
+  if (!state) return null;
+  let tokens = 0;
+  let cost = 0;
+  for (const bucket of [state.models, state.tools]) {
+    for (const usage of Object.values(bucket ?? {})) {
+      if (typeof usage?.totalTokens === "number") tokens += usage.totalTokens;
+      const total = (usage as { cost?: { total?: unknown } } | undefined)?.cost?.total;
+      if (typeof total === "number") cost += total;
+    }
+  }
+  return tokens > 0 ? { tokens, cost } : null;
+}
 
 /**
  * 每个父会话最多同时跑几个子 agent。
@@ -188,6 +285,20 @@ export function subagentExtension(options: SubagentOptions) {
           })),
           instructions: opt(str({ description: "Role/system instructions, e.g. 'review code read-only'." })),
           maxTurns: opt(num({ description: "Cap on the child's tool rounds. Optional but recommended for big jobs." })),
+          readOnly: opt(bool({
+            description:
+              "Give the child only the `read` tool. Use it whenever it only needs to look, not change anything — " +
+              "this is enforced, unlike asking it politely in `constraints`.",
+          })),
+          shareMemory: opt(bool({
+            description:
+              "Allow the child to WRITE the user's global memory (default false: it can read the memory section " +
+              "but has no `memory` tool). The parent decides what becomes long-term memory.",
+          })),
+          timeoutMs: opt(num({
+            description:
+              "Hard deadline in milliseconds (default 300000, max 1800000). On timeout the child is aborted.",
+          })),
         }),
         // 重跑是安全的：子会话 id 有 memo 兜底，投递有固定 requestId 兜底。
         replay: "safe",
@@ -199,13 +310,23 @@ export function subagentExtension(options: SubagentOptions) {
           let childId = await api.memo<number>(MEMO_KEY, context);
           if (childId === undefined) {
             /*
-             * 子会话的工具集 = 父会话的工具集 - subagent 自己。
+             * 子会话的工具集：注册表全量 − subagent 自己 −（可选）只留 read −（默认）去掉 memory 工具。
+             *
              * 用 ToolRegistration 对象（不是名字）从 registry 快照里捞，这是 AgentChange.tools 的要求。
+             * 为什么用注册表而不是父的 `agent.tools`：`api.agent()` 拿到的是解析后的工具，但我们不想让
+             * 子会话继承父会话的临时过滤（那些是为「这一轮」算的）；这里要的是"这类子 agent 允许用什么"。
              */
+            const allowlist = args.readOnly === true ? new Set(["read"]) : undefined;
             const childTools = api.registry
               .installed()
               .flatMap((extension) => extension.tools ?? [])
-              .filter((tool) => tool.name !== "subagent");
+              .filter(
+                (tool) =>
+                  tool.name !== "subagent" &&
+                  (allowlist === undefined || allowlist.has(tool.name)) &&
+                  // 全局记忆默认只读：section 还在（它知道用户偏好），但写工具不给
+                  (args.shareMemory === true || tool.name !== "memory"),
+              );
 
             const child = await harness.createConversation(
               {
@@ -218,7 +339,7 @@ export function subagentExtension(options: SubagentOptions) {
                     args.maxTurns !== undefined && Number.isFinite(args.maxTurns) && args.maxTurns >= 1
                       ? Math.floor(args.maxTurns)
                       : null,
-                  ...(childTools.length > 0 ? { tools: childTools } : {}),
+                  ...(childTools.length > 0 || args.readOnly === true ? { tools: childTools } : {}),
                 },
               },
               context,
@@ -234,6 +355,7 @@ export function subagentExtension(options: SubagentOptions) {
             return {
               output: [{ type: "text", text: `子会话 ${childId} 打不开（可能已经被删了）。` }],
               isError: true,
+              details: detailsOf({ conversationId: childId, error: "missing" }),
             };
           }
 
@@ -244,6 +366,31 @@ export function subagentExtension(options: SubagentOptions) {
            */
           const parent = Number(api.conversationId);
           await gate.acquire(parent);
+
+          /*
+           * 4) 盯住子会话的实时状态：父界面上的卡片至少能显示"它在第几轮跑什么"。
+           *    进度写进 api.output()，它会进 live 的工具槽位（UI 只显示尾巴，不会进父的模型上下文）。
+           */
+          const childConversation = await harness.conversation(childId as ConversationId, context);
+          const childView = childConversation ? await childConversation.watch(context) : undefined;
+          let lastProgress = "";
+          const emitProgress = (): void => {
+            const line = summarizeLive(childView?.value.docs["pi.live"]);
+            if (!line || line === lastProgress) return;
+            lastProgress = line;
+            api.output(`[子 agent #${childId}] ${line}\n`);
+          };
+
+          const timeoutMs = Math.min(
+            MAX_TIMEOUT_MS,
+            Math.max(
+              MIN_TIMEOUT_MS,
+              args.timeoutMs !== undefined && Number.isFinite(args.timeoutMs)
+                ? Math.floor(args.timeoutMs)
+                : DEFAULT_TIMEOUT_MS,
+            ),
+          );
+
           try {
             const submission = await handle.submit(
               {
@@ -255,37 +402,70 @@ export function subagentExtension(options: SubagentOptions) {
               context,
             );
 
-            /* 4) 等它跑完。注意：取消 context 只停止「等待」，子会话会继续跑完。 */
-            const receipt = await submission.wait(context);
+            emitProgress();
+            childView?.start(async (call) => {
+              if (call.kind === "value") emitProgress();
+            });
 
-            if (receipt.status !== "done") {
+            /*
+             * 5) 等它跑完，最多 timeoutMs。
+             *    超时不是"不等了"，是真的把子会话停掉 —— 否则它会一直占着名额烧 token。
+             */
+            const receipt = await waitWithDeadline(submission.wait(context), timeoutMs);
+
+            if (receipt === "timeout") {
+              await handle.abort(context).catch(() => undefined);
               return {
                 output: [
                   {
                     type: "text",
-                    text: `子 agent 没有给出答案（${receipt.status}：${receipt.reason}）。`,
+                    text: `子 agent 超时（${Math.round(timeoutMs / 1000)} 秒），已中止。子会话 #${childId}。`,
                   },
                 ],
                 isError: true,
+                details: detailsOf({ conversationId: childId, timedOut: true }),
               };
             }
 
-            /* 5) 读答案：receipt.answer 就是最终 assistant entry 的 id。 */
+            if (receipt.status !== "done") {
+              const detail =
+                receipt.detail === undefined ? "" : ` · ${JSON.stringify(receipt.detail).slice(0, 200)}`;
+              return {
+                output: [
+                  {
+                    type: "text",
+                    text: `子 agent 没有给出答案（${receipt.status}：${receipt.reason}${detail}）。子会话 #${childId}。`,
+                  },
+                ],
+                isError: true,
+                details: detailsOf({ conversationId: childId, error: receipt.reason }),
+              };
+            }
+
+            /* 6) 读答案 + 用量：receipt.answer 就是最终 assistant entry 的 id。 */
             const answer = receipt.answer;
             if (answer === undefined) {
               return {
                 output: [{ type: "text", text: "子 agent 的这次提交没有 answer（可能被中断了）。" }],
                 isError: true,
+                details: detailsOf({ conversationId: childId, error: "no-answer" }),
               };
             }
             const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);
             const text = textOf(entry);
 
+            /* 用量记在子会话自己的 pi.usage 里（父会话看不到），顺手读出来给界面 */
+            const usage = usageTotals(childView?.value.docs["pi.usage"]);
             return {
               output: [{ type: "text", text: text || "(子 agent 没有输出文本)" }],
-              details: { conversationId: childId },
+              details: detailsOf({ conversationId: childId, ...(usage ?? {}) }),
             };
           } finally {
+            try {
+              await childView?.stop();
+            } catch {
+              /* 会话可能已经结束/关闭，停不下就算了 */
+            }
             gate.release(parent);
           }
         },

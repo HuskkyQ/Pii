@@ -22,8 +22,22 @@ export type Block =
       result?: string;
       isError?: boolean;
       durationMs?: number;
+      /**
+       * 工具返回的结构化信息（`ToolExecutionResult.details`）。
+       * 目前用于 subagent：子会话 id、token、花费 —— 这些不喂给模型，只给界面看。
+       */
+      details?: unknown;
     }
-  | { type: "toolResult"; id?: string; name?: string; text: string; isError?: boolean; durationMs?: number }
+  | {
+      type: "toolResult";
+      id?: string;
+      name?: string;
+      text: string;
+      isError?: boolean;
+      durationMs?: number;
+      /** 由 projectEntries 合并进对应的 toolCall 块；单独出现时前端不展示 */
+      details?: unknown;
+    }
   /**
    * 用户上传的图片。
    *
@@ -56,8 +70,13 @@ export interface LiveView {
   phase?: LivePhase;
   /** 正在流式生成的助手消息（半截）。每 ~100ms 追一次 */
   message?: { blocks: Block[] };
-  /** 正在跑的工具（名字 + 状态），仅用于展示 */
-  tools?: { name: string; status: "pending" | "running" | "done" }[];
+  /** 正在跑的工具（名字 + 状态 + 输出尾巴），仅用于展示 */
+  tools?: {
+    name: string;
+    status: "pending" | "running" | "done";
+    /** 运行中输出（尾部截断）：subagent 用它显示子 agent 在干什么 */
+    output?: string;
+  }[];
   /** 思考字数（thinking 块的字符总数），给实时状态显示用 */
   thinkingChars?: number;
   /** 工具输出字数（正在跑的工具累积输出字符数） */

@@ -6,7 +6,13 @@
 import type { Hono } from "hono";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createConversation, listConversations, parseConversationId, titleOf } from "../conversations.ts";
+import {
+  createConversation,
+  listConversations,
+  parseConversationId,
+  subagentIdsOf,
+  titleOf,
+} from "../conversations.ts";
 import { normalizePolicy, presetOf } from "../policies.ts";
 import { projectView } from "../project.ts";
 import { TITLE_MAX } from "../titles.ts";
@@ -145,16 +151,24 @@ app.delete("/api/conversations/:id", async (c) => {
     return c.json({ error: "这个会话还有没跑完的任务，等它结束再删" }, 409);
   }
 
+  /*
+   * 子 agent 的会话是「派它的父会话」的一部分：父删了，子留着就是永远没人认领的孤儿
+   * （不占 CPU，但一直占磁盘，而且谁也看不见）。所以一起删。
+   */
+  const children = await subagentIdsOf(agent, id);
+
   trash.hide(id);
   const result = purgeConversations({
     dbPath: join(dataDir, "agent.sqlite"),
-    ids: [id],
+    ids: [id, ...children],
   });
   if (result.deleted.length > 0) trash.forget(result.deleted);
-  titles.delete(id);
-  customTitles.forget(id);
-  policies.forget(id);
-  lastConversation.forget(id);
+  for (const gone of [id, ...children]) {
+    titles.delete(gone);
+    customTitles.forget(gone);
+    policies.forget(gone);
+    lastConversation.forget(gone);
+  }
 
   return c.json({ ok: true, deletedRows: result.deleted.length > 0 });
 });

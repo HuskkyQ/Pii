@@ -15,7 +15,7 @@ import { safeNext } from "../src/server/auth-routes.ts";
 import { parseConversationId } from "../src/server/conversations.ts";
 import { normalizePolicy, resolveUserConversation } from "../src/server/policies.ts";
 import { ApprovalBroker } from "../src/server/approvals.ts";
-import { SubagentGate } from "../src/tools/subagent.ts";
+import { SubagentGate, waitWithDeadline } from "../src/tools/subagent.ts";
 import { projectEntries, projectView } from "../src/server/project.ts";
 
 function fakeView(entries: unknown[]) {
@@ -227,4 +227,17 @@ test("SubagentGate: 超过上限排队，释放后按顺序放行，不同父会
   assert.equal(gate.running(2), 0);
 
   await Promise.all([third, fourth]);
+});
+
+test("waitWithDeadline: 超时返回 timeout，正常透传结果，迟到的 rejection 不炸进程", async () => {
+  assert.equal(await waitWithDeadline(Promise.resolve("done"), 1_000), "done");
+  assert.equal(await waitWithDeadline(new Promise<string>(() => {}), 10), "timeout");
+
+  let rejectLate: (error: Error) => void = () => {};
+  const late = new Promise<string>((_, reject) => {
+    rejectLate = reject;
+  });
+  assert.equal(await waitWithDeadline(late, 5), "timeout");
+  rejectLate(new Error("late")); // 超时后原 promise 才失败：必须被吞掉
+  await new Promise((resolve) => setTimeout(resolve, 10));
 });

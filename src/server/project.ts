@@ -24,6 +24,8 @@ interface RawMessage {
   isError?: boolean;
   durationMs?: number;
   timestamp?: number;
+  /** 工具结果的结构化信息（`ToolExecutionResult.details`），只给界面看 */
+  details?: unknown;
 }
 
 function asBlocks(message: RawMessage, conversationId = 0, entryId = 0): Block[] {
@@ -51,6 +53,7 @@ function asBlocks(message: RawMessage, conversationId = 0, entryId = 0): Block[]
           name: message.toolName,
           isError: message.isError,
           durationMs: message.durationMs,
+          ...(message.details === undefined ? {} : { details: message.details }),
         });
       } else {
         blocks.push({ type: "text", text: p.text });
@@ -146,7 +149,10 @@ export function projectEntries(view: ConversationView): Entry[] {
  * 对不上 id 的残块（极少）保留原样，由前端旧路径兼底。
  */
 function mergeToolResults(entries: Entry[]): Entry[] {
-  const resultById = new Map<string, { text: string; isError?: boolean; durationMs?: number }>();
+  const resultById = new Map<
+    string,
+    { text: string; isError?: boolean; durationMs?: number; details?: unknown }
+  >();
   for (const entry of entries) {
     for (const block of entry.blocks) {
       if (block.type !== "toolResult" || !block.id) continue;
@@ -155,8 +161,14 @@ function mergeToolResults(entries: Entry[]): Entry[] {
         prev.text += block.text;
         if (block.isError) prev.isError = true;
         if (block.durationMs !== undefined) prev.durationMs = block.durationMs;
+        if (block.details !== undefined) prev.details = block.details;
       } else {
-        resultById.set(block.id, { text: block.text, isError: block.isError, durationMs: block.durationMs });
+        resultById.set(block.id, {
+          text: block.text,
+          isError: block.isError,
+          durationMs: block.durationMs,
+          ...(block.details === undefined ? {} : { details: block.details }),
+        });
       }
     }
   }
@@ -170,6 +182,7 @@ function mergeToolResults(entries: Entry[]): Entry[] {
       block.result = result.text;
       block.isError = result.isError;
       block.durationMs = result.durationMs;
+      if (result.details !== undefined) block.details = result.details;
       consumed.add(block.id);
     }
   }
@@ -191,6 +204,11 @@ function mergeToolResults(entries: Entry[]): Entry[] {
  *  - message.blocks：模型回复的半截内容（text / thinking / toolCall）
  *  - tools：正在跑的工具名与状态
  */
+/** 取字符串末尾 `limit` 个字符，截断时前面加省略号。 */
+function tail(text: string, limit: number): string {
+  return text.length <= limit ? text : `…${text.slice(-limit)}`;
+}
+
 function projectLive(raw: unknown): LiveView | null {
   if (!raw || typeof raw !== "object") return null;
   const live = raw as {
@@ -229,6 +247,10 @@ function projectLive(raw: unknown): LiveView | null {
     out.tools = (live.tools ?? []).map((tool) => ({
       name: typeof tool.name === "string" ? tool.name : "tool",
       status: tool.status === "running" || tool.status === "done" ? tool.status : "pending",
+      /* 只带尾巴：完整输出可能很大，而实时视图每秒都在推 */
+      ...(typeof tool.output === "string" && tool.output.length > 0
+        ? { output: tail(tool.output, 400) }
+        : {}),
     }));
     const outputChars = (live.tools ?? []).reduce(
       (sum, tool) => sum + (typeof tool.output === "string" ? tool.output.length : 0),

@@ -5,7 +5,7 @@
  * 归档落盘、快照投影。它们是最容易在重构里被悄悄改坏、又最适合用单测罩住的地方。
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,6 +17,7 @@ import { normalizePolicy, resolveUserConversation } from "../src/server/policies
 import { ApprovalBroker } from "../src/server/approvals.ts";
 import { SubagentGate, waitWithDeadline } from "../src/tools/subagent.ts";
 import { projectEntries, projectView } from "../src/server/project.ts";
+import { previewTarget } from "../src/server/static.ts";
 
 function fakeView(entries: unknown[]) {
   return { conversation: { id: 9 }, entries, docs: {} } as never;
@@ -240,4 +241,53 @@ test("waitWithDeadline: 超时返回 timeout，正常透传结果，迟到的 re
   assert.equal(await waitWithDeadline(late, 5), "timeout");
   rejectLate(new Error("late")); // 超时后原 promise 才失败：必须被吞掉
   await new Promise((resolve) => setTimeout(resolve, 10));
+});
+
+test("previewTarget: 只服务 <项目>/public 下的文件", () => {
+  const root = "/srv/pii-projects";
+
+  const dir = previewTarget(root, "/preview/demo/");
+  assert.equal(dir.ok, true);
+  if (dir.ok) {
+    assert.equal(dir.file, "/srv/pii-projects/demo/public");
+    assert.equal(dir.directory, true);
+  }
+
+  const file = previewTarget(root, "/preview/demo/assets/app.js");
+  assert.equal(file.ok, true);
+  if (file.ok) {
+    assert.equal(file.file, "/srv/pii-projects/demo/public/assets/app.js");
+    assert.equal(file.directory, false);
+  }
+});
+
+test("previewTarget: 拒绝穿越、点文件、非法项目名", () => {
+  const root = "/srv/pii-projects";
+  const bad = [
+    "/preview",
+    "/preview/",
+    "/preview/demo/../secret",
+    "/preview/demo/%2e%2e/secret",
+    "/preview/../etc/passwd",
+    "/preview/demo/.env",
+    "/preview/demo/.git/config",
+    "/preview/.hidden/index.html",
+    "/preview/demo%00/index.html",
+    "/preview/-bad/index.html",
+  ];
+  for (const path of bad) {
+    assert.equal(previewTarget(root, path).ok, false, path);
+  }
+});
+
+test("previewTarget: 符号链接不能逃出 public/", () => {
+  const root = mkdtempSync(join(tmpdir(), "pii-preview-"));
+  try {
+    mkdirSync(join(root, "demo", "public"), { recursive: true });
+    symlinkSync("/etc", join(root, "demo", "public", "escape"));
+    assert.equal(previewTarget(root, "/preview/demo/escape/passwd").ok, false);
+    assert.equal(previewTarget(root, "/preview/demo/").ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

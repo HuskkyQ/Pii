@@ -62,6 +62,8 @@ export interface PiiConfig {
   searchKey: string | undefined;
   /** `PII_SEARCH=off` 时连必应也不装 —— 断网环境或不想让它上网时用。 */
   searchEnabled: boolean;
+  /** 静态预览根目录：`PII_PREVIEW_ROOT` → 默认 agent 的工作目录。 */
+  previewRootEnv: string | undefined;
   /** SIGINT/SIGTERM 后最多等多久让正在跑的会话结束；0 = 立刻退。 */
   shutdownIdleMs: number;
   /** 停止接受新连接后，给已有连接（含长连 SSE）收尾的窗口，超时硬断。 */
@@ -99,6 +101,7 @@ export function loadConfig(): PiiConfig {
     passHash: (process.env.PII_PASS_HASH ?? "").trim(),
     tokenHintEnv: (process.env.PII_TOKEN_HINT ?? "").trim(),
     keepAwake: process.env.PII_KEEP_AWAKE !== "0",
+    previewRootEnv: process.env.PII_PREVIEW_ROOT,
     searchKey: process.env.PII_SEARCH_KEY?.trim() || undefined,
     searchEnabled: process.env.PII_SEARCH !== "off",
     // 这两个和编排的 stop_grace_period 是一套账：idle + grace 必须小于它，
@@ -121,4 +124,14 @@ export function resolveCwd(override?: string): string {
 /** 归档目录：override → `PII_ARCHIVE_DIR` → `<数据目录>/archive`。 */
 export function resolveArchiveDir(dataDir: string, override?: string): string {
   return override ?? loadConfig().archiveDirEnv ?? join(dataDir, "archive");
+}
+
+/**
+ * 静态预览根目录：`PII_PREVIEW_ROOT` → 默认 agent 的工作目录（`PII_CWD`）。
+ *
+ * `/preview/<项目>/...` 只读地暴露 `<根>/<项目>/public/` 下面的文件；
+ * 根目录缩到项目里的 public/ 是刻意的 —— 项目根还有 .env、.git、数据库这类东西。
+ */
+export function resolvePreviewRoot(override?: string): string {
+  return override ?? loadConfig().previewRootEnv ?? resolveCwd();
 }

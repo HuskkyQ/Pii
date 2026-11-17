@@ -10,16 +10,98 @@
  * 末尾的 app.use("*", serveStatic) 兜底**不在这里**：它必须最后注册，
  * 由 main.ts 统一控制顺序（见设计文档第 4 节）。
  */
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Hono } from "hono";
 
 import { PAGE } from "./page.ts";
 import type { AppContext } from "./context.ts";
 
+/** 预览路径的结局：给出真实文件路径，或者给出该回的状态码。 */
+export type PreviewTarget =
+  | { ok: true; file: string; directory: boolean }
+  | { ok: false; status: 400 | 404 };
+
+/**
+ * `/preview/<项目>/<rest>` → `<root>/<项目>/public/<rest>`。
+ *
+ * 这是静态预览**唯一的一道权限闸**，三件事：
+ *  1. 项目名只允许 `[A-Za-z0-9][A-Za-z0-9._-]*`，且每一段路径都不能以 `.` 开头
+ *     —— `.env`、`.git/config` 这类文件一律不服务；
+ *  2. 任何一段带 `..` 都拒绝（URL 解码之后再看，`%2e%2e` 也挡）；
+ *  3. realpath 之后必须仍在 `<root>/<项目>/public` 里 —— 挡符号链接逃逸。
+ *
+ * 为什么根目录缩到项目里的 `public/`：项目根还躺着 `.env`、`.git`、数据库，
+ * 没必要为了让页面能访问就把整棵树的读权限交出去。
+ */
+export function previewTarget(root: string, requestPath: string): PreviewTarget {
+  if (!requestPath.startsWith("/preview/")) return { ok: false, status: 400 };
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(requestPath);
+  } catch {
+    return { ok: false, status: 400 };
+  }
+  if (decoded.includes("\0")) return { ok: false, status: 400 };
+
+  const parts = decoded.slice("/preview/".length).split("/").filter(Boolean);
+  const project = parts[0];
+  if (project === undefined) return { ok: false, status: 404 };
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) return { ok: false, status: 404 };
+
+  const rest = parts.slice(1);
+  if (rest.some((part) => part.startsWith(".") || part.includes(".."))) {
+    return { ok: false, status: 404 };
+  }
+
+  const base = join(root, project, "public");
+  const file = join(base, ...rest);
+
+  let realBase = base;
+  let real = file;
+  try {
+    if (existsSync(base)) realBase = realpathSync(base);
+    if (existsSync(file)) real = realpathSync(file);
+  } catch {
+    return { ok: false, status: 404 };
+  }
+  if (real !== realBase && !real.startsWith(realBase + sep)) return { ok: false, status: 404 };
+
+  return { ok: true, file, directory: rest.length === 0 };
+}
+
 export function registerStatic(app: Hono, ctx: AppContext): void {
   const { webDist: WEB_DIST } = ctx;
+
+  /*
+   * 静态预览：`/preview/<项目>/...` 只读暴露 `<previewRoot>/<项目>/public/`。
+   *
+   * 为什么放在应用里而不是 Caddy：鉴权中间件在所有业务路由之前注册，
+   * 这条路由自动继承登录；Caddy 的 file_server 反而会绕过 pii 的登录。
+   */
+  const previewRoot = ctx.previewRoot;
+  app.use("/preview/*", async (c, next) => {
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.text("只读", 405);
+    const target = previewTarget(previewRoot, new URL(c.req.url).pathname);
+    if (!target.ok) return c.text(target.status === 400 ? "bad path" : "not found", target.status);
+    c.header("Cache-Control", "no-cache"); // 产物随时会变，别让浏览器记住旧版
+    return next();
+  });
+  app.use(
+    "/preview/*",
+    serveStatic({
+      root: previewRoot,
+      /* serveStatic 要的是「相对 root 的路径」：demo/public/index.html */
+      rewriteRequestPath: (path) => {
+        const target = previewTarget(previewRoot, path);
+        if (!target.ok) return path;
+        const rel = relative(previewRoot, target.file).split(sep).join("/");
+        return `/${rel}${target.directory ? "/" : ""}`;
+      },
+    }),
+  );
 
 app.get("/", (c) => {
   // 构建过就托管 React；否则退回阶段 2 的测试页。

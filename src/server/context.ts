@@ -18,7 +18,7 @@ import type { Conversation, ConversationId } from "@earendil-works/pi-durable";
 
 import type { Agent } from "../agent.ts";
 import { openAgent } from "../agent.ts";
-import { loadConfig, resolveArchiveDir, resolveDataDir } from "../config.ts";
+import { loadConfig, resolveArchiveDir, resolveDataDir, resolvePreviewRoot } from "../config.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
 import { openConversation, orphanSubagentIds } from "./conversations.ts";
@@ -98,6 +98,8 @@ export interface AppContext {
   /** /api/build 扫源码的基准目录（`src/`，含 agent/tools/config 等全部源码）。 */
   sourceDir: string;
   archiveDir: string;
+  /** 静态预览根目录（`/preview/<项目>/...` 的根）。 */
+  previewRoot: string;
   clientMetrics: unknown[];
   /** 值类型的共享标记必须包成对象：解构成副本会让 /api/restart 的去重判断失效。 */
   flags: { restartPending: boolean };
@@ -298,6 +300,7 @@ export async function createContext(): Promise<AppContext> {
   /** 以下定义原本散落在 main.ts 的路由之间，现收进 ctx 供多个模块共用。 */
   /** 归档目录：`PII_ARCHIVE_DIR` → `<数据目录>/archive`（解析在 config.ts）。 */
   const archiveDir = resolveArchiveDir(dataDir);
+  const previewRoot = resolvePreviewRoot();
   const clientMetrics: unknown[] = [];
   const flags = { restartPending: false };
 
@@ -443,6 +446,7 @@ export async function createContext(): Promise<AppContext> {
   return {
     sourceDir: SOURCE_DIR,
     archiveDir,
+    previewRoot,
     clientMetrics,
     flags,
     /*

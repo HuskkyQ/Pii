@@ -60,6 +60,13 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   /*
+   * 静态预览（/preview/…）是用户项目的产物，不是应用外壳：
+   * 一律直连网络。否则导航请求会命中下面的「缓存优先」分支，
+   * 打开预览页看到的却是 pii 自己的界面。
+   */
+  if (url.pathname.startsWith("/preview/")) return;
+
+  /*
    * 导航请求：**缓存优先 + 后台更新**（stale-while-revalidate）。
    *
    * 以前是「网络优先」：每次打开都要先等一个来回（Funnel 的入口在境外，

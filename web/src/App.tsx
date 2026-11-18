@@ -264,6 +264,22 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={250}>
+      {/*
+       * 顶部/底部的白色渐隐画在**整窗**上，而不是头栏、输入框各自画一条。
+       *
+       * 以前各画各的：那两条光的左边界正好落在侧栏右边缘，于是侧栏那侧没有光、
+       * 主区那侧有光 —— 屏幕上方出现一条只有几十像素高的竖硬边，
+       * 也就是肉眼看到的「割裂」。光的边界不该和布局的边界重合。
+       */}
+      <div
+        aria-hidden
+        className="edge-fade-down pointer-events-none fixed inset-x-0 top-0 z-0 h-[52px]"
+      />
+      <div
+        aria-hidden
+        className="edge-fade-up pointer-events-none fixed inset-x-0 bottom-0 z-0 h-[126px]"
+      />
+
       <div className="relative z-10 flex h-dvh text-foreground">
         <ConversationsPanel
           open={menuOpen}

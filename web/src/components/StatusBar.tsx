@@ -116,7 +116,7 @@ export function StatusBar({
   };
 
   return (
-    <header className="edge-fade-down flex shrink-0 items-center gap-2 overflow-hidden px-2 py-2 sm:px-3 sm:py-2.5">
+    <header className="flex shrink-0 items-center gap-2 overflow-hidden px-2 py-2 sm:px-3 sm:py-2.5">
       {/* 一个入口两端复用：PC 收起/展开侧栏，手机拉出抽屉。位置永远不变。 */}
       <Button
         size="icon"

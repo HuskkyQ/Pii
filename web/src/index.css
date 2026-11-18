@@ -156,8 +156,7 @@
    * 唯一有实体感的东西只剩输入框那个「浮岛」。
    */
   .edge-fade-down,
-  .edge-fade-up,
-  .edge-fade-right {
+  .edge-fade-up {
     background-color: transparent;
   }
   .edge-fade-down {
@@ -173,15 +172,6 @@
       to top,
       oklch(1 0 0 / 5%) 0%,
       oklch(1 0 0 / 2.5%) 55%,
-      transparent 100%
-    );
-  }
-  /* 桌面侧栏同理：上下都融了，只剩它一条竖硬边就特别扎眼 */
-  .edge-fade-right {
-    background-image: linear-gradient(
-      to right,
-      oklch(1 0 0 / 5%) 0%,
-      oklch(1 0 0 / 2%) 70%,
       transparent 100%
     );
   }
@@ -284,37 +274,149 @@
   }
 
   /*
+   * 侧栏会话标题：平时尾部省略号，鼠标悬停后走马灯滚出全名。
+   *
+   * 为什么要 container-type：走马灯要知道「滚到头」的距离 = 文字宽 - 容器宽。
+   * transform 里的百分比是按**元素自己**的宽度算的（= 文字宽），容器宽拿不到 ——
+   * 除非把外层变成查询容器，用 cqw 拿到它。
+   *
+   * min() 那一下是给「文字其实没超宽」的行兜底：算出来是正数时 min 取 0，
+   * 动画照跑但一动不动，不会把短标题推出可视区。
+   *
+   * 悬停规则包在 no-preference 里：系统开了「减少动态效果」就退回纯省略号，
+   * 而不是变成「硬裁掉且没有省略号」—— 后者比原来更糟。
+   */
+  .conv-title {
+    container-type: inline-size;
+    overflow: hidden;
+  }
+  .conv-title > span {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .conv-row:hover .conv-title > span {
+      /*
+       * 必须保持 display:block。改成 inline-block 会让它落在基线上，
+       * 行盒底部多出一段字体降部的高度 —— 整行会往下窜几个像素，
+       * 悬停时看起来就是「上下跳动」。
+       *
+       * 换 width:max-content 达到同样目的：元素宽度 = 文字宽度，
+       * 于是 translateX(-100%) 才等于「文字宽」，而高度一点没变。
+       */
+      width: max-content;
+      text-overflow: clip;
+      /* 0.2s 延迟：鼠标只是扫过去时不滚，停住了才滚。
+         linear 而不是 ease-in-out：走马灯要的是匀速，缓动会让两头慢得发黏。 */
+      animation: conv-marquee 3s linear 0.2s infinite alternate;
+    }
+  }
+  @keyframes conv-marquee {
+    0%,
+    10% {
+      transform: translateX(0);
+    }
+    90%,
+    100% {
+      transform: translateX(min(0px, calc(-100% + 100cqw)));
+    }
+  }
+
+  /*
    * 底层光晕。用 radial-gradient 而不是 filter: blur() —— 渐变本身就是软的，
    * 少一次全屏高斯模糊，手机上省一大截 GPU。
+   *
+   * 两层反向漂移：
+   *   ::before = 主光（紫/青/粉/蓝四团），26s
+   *   ::after  = 副光（琥珀/青绿/紫三团，透明度更低），19s，方向相反
+   * 周期和方向都错开，看起来才是「水在流动」；同向同速只会像整张图在平移。
+   *
+   * 动画只改 transform —— 交给 GPU 合成器，不重绘渐变，代价接近 0。
+   * 千万不要改成动 background-position 或渐变 stop：那是每帧重绘整屏。
    */
-  body::before {
+  body::before,
+  body::after {
     content: "";
     position: fixed;
     inset: 0;
     z-index: 0;
     pointer-events: none;
+    will-change: transform;
+  }
+
+  body::before {
     background:
       radial-gradient(38% 46% at 14% 12%, oklch(0.62 0.2 300 / 24%), transparent 72%),
       radial-gradient(34% 40% at 86% 18%, oklch(0.68 0.15 205 / 20%), transparent 74%),
       radial-gradient(40% 42% at 78% 88%, oklch(0.6 0.19 335 / 16%), transparent 72%),
       radial-gradient(36% 38% at 20% 86%, oklch(0.64 0.14 250 / 14%), transparent 70%);
-    animation: liquid-drift 34s ease-in-out infinite alternate;
+    animation: liquid-drift 11s ease-in-out infinite;
   }
 
+  body::after {
+    background:
+      radial-gradient(30% 34% at 62% 8%, oklch(0.72 0.15 60 / 12%), transparent 76%),
+      radial-gradient(34% 30% at 8% 58%, oklch(0.66 0.13 160 / 11%), transparent 74%),
+      radial-gradient(26% 30% at 92% 62%, oklch(0.6 0.17 320 / 10%), transparent 76%);
+    /* 副光不在首屏骨架里，淡入一下，别让它在挂载瞬间「闪」出来 */
+    animation:
+      liquid-fade-in 900ms ease-out both,
+      liquid-drift-counter 15s ease-in-out infinite;
+  }
+
+  @keyframes liquid-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /*
+   * 动效：**只做非等比缩放，不做平移**。开局和收尾都是 scale(1)
+   * （= 首屏骨架画的静止位置），中间「横向拉长 + 纵向压扁」来回换手。
+   *
+   * 为什么不能平移：图层就是视口那么大，而几团光故意画到屏幕外
+   * （右侧那团中心在 86%，半径伸到 111%）。一旦 translate 把图层边界
+   * 推进视口内，边界左边还有色、右边是空的 —— 屏幕上出现一条硬竖线。
+   *
+   * 为什么非等比缩放比平移更像液体：
+   *   - 缩放的中心是图层正中，离中心越远的光挪得越多，
+   *     所以几团光会**彼此错位**，不是整张图一起挪
+   *   - x/y 两个方向倍率不同，圆形光斑被拉成椭圆，还会慢慢转向
+   *   - 任何时刻两个轴的倍率都 >= 1，图层永远盖满视口，不会露边
+   *
+   * 所以这里不需要 translate，也不需要 rotate（旋转会露出四角）。
+   */
   @keyframes liquid-drift {
-    0% { transform: translate3d(0, 0, 0) scale(1); }
-    50% { transform: translate3d(1.5%, -1%, 0) scale(1.04); }
-    100% { transform: translate3d(-1.5%, 1.5%, 0) scale(1.02); }
+    0% { transform: scale(1); }
+    25% { transform: scale(1.28, 1.12); }
+    55% { transform: scale(1.08, 1.3); }
+    80% { transform: scale(1.22, 1.18); }
+    100% { transform: scale(1); }
   }
 
-  /* H5：两团光就够，关掉动画、降 blur 半径 —— iOS Safari 上满屏折射会掉帧 */
+  @keyframes liquid-drift-counter {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.1, 1.32); }
+    60% { transform: scale(1.32, 1.06); }
+    85% { transform: scale(1.14, 1.24); }
+    100% { transform: scale(1); }
+  }
+
+  /* H5：两团光就够，降 blur 半径 —— iOS Safari 上满屏折射会掉帧 */
   @media (max-width: 767px) {
     body::before {
       background:
         radial-gradient(70% 38% at 12% 6%, oklch(0.62 0.18 300 / 18%), transparent 72%),
         radial-gradient(65% 34% at 88% 94%, oklch(0.66 0.14 210 / 14%), transparent 74%);
-      animation: none;
+      /*
+       * 手机上也漂，周期比桌面慢一点（18s）：只改 transform，不重绘渐变，
+       * 代价是合成器一直在跑（多耗一点电）。真机若发烫/掉帧就退回 animation: none。
+       */
+      animation: liquid-drift 18s ease-in-out infinite;
     }
+    /* 副光在手机上省掉：多一层全屏合成层，收益不抵代价 */
+    body::after { content: none; }
     .glass,
     .glass-strong {
       -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -324,7 +426,8 @@
 
   /* 系统开了「减少动态效果」就别漂了 */
   @media (prefers-reduced-motion: reduce) {
-    body::before { animation: none; }
+    body::before,
+    body::after { animation: none; }
   }
   /*
    * iOS standalone 的两个老毛病，都在这一层治：

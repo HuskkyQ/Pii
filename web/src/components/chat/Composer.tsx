@@ -138,7 +138,7 @@ export function Composer({
   const dangerPreset = permissionPreset === "all";
 
   return (
-    <div className="edge-fade-up pb-[env(safe-area-inset-bottom)]">
+    <div className="pb-[env(safe-area-inset-bottom)]">
       <div className="mx-auto w-full max-w-[860px] px-3 py-2.5 sm:px-4">
         {images.length > 0 && (
           <div className="allow-x-pan mb-2 flex gap-2 overflow-x-auto pb-0.5">

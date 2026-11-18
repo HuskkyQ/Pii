@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
 import { stepsFromEntries, stepsFromLive } from "@/lib/process-steps";
 import type { Entry, LiveView, Snapshot } from "@/lib/types";
-import { DIVIDER_GAP, blocksToQuote, formatDivider } from "@/lib/time";
+import { DIVIDER_GAP, formatDivider } from "@/lib/time";
 
 import { EntryRow } from "./EntryRow";
 import { LiveRow, liveAnswerText } from "./LiveRow";
@@ -12,7 +12,6 @@ import { LoadingOlder } from "./LoadingOlder";
 import { ProcessRail } from "./ProcessRail";
 import { RunErrorBanner } from "./RunErrorBanner";
 import { TranscriptSkeleton } from "./TranscriptSkeleton";
-import { TurnMarker, TurnRailLine } from "./TurnRail";
 import { TurnRow, groupTurns } from "./TurnRow";
 import type { Turn } from "./TurnRow";
 
@@ -189,39 +188,6 @@ export function Transcript({
     setRailOpen((map) => (map[lastTurnKey] ? map : { ...map, [lastTurnKey]: true }));
   }, [busy, lastTurnKey]);
 
-  /*
-   * 左侧时间轴：每一轮一个点。
-   * 「当前轮」不靠 scrollTop 算像素，而是问每一轮「你的顶边过我这条线了吗」——
-   * 这样气泡、折叠轨高矮不一致也不会错位。
-   */
-  const turnRefs = useRef(new Map<number, HTMLDivElement>());
-  const [activeKey, setActiveKey] = useState<number | null>(null);
-
-  const markActive = useCallback(() => {
-    const view = viewport.current;
-    if (!view) return;
-    const edge = view.getBoundingClientRect().top + 96;
-    let current: number | null = null;
-    for (const turn of turns) {
-      const el = turnRefs.current.get(turn.key);
-      if (el && el.getBoundingClientRect().top <= edge) current = turn.key;
-    }
-    setActiveKey((prev) => (prev === current ? prev : current));
-  }, [turns]);
-
-  // 挂载、翻页、新快照（视口高度变了）都重新算一次
-  useEffect(() => {
-    markActive();
-  }, [markActive]);
-
-  function jumpTo(key: number) {
-    const view = viewport.current;
-    const el = turnRefs.current.get(key);
-    if (!view || !el) return;
-    const top = view.scrollTop + el.getBoundingClientRect().top - view.getBoundingClientRect().top - 12;
-    view.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-  }
-
   return (
     <ScrollArea
       className="h-full"
@@ -233,7 +199,6 @@ export function Transcript({
 
         const nearTop = target.scrollTop < LOAD_AHEAD;
         setAtTop(nearTop);
-        markActive();
         if (nearTop && hasMore && !loadingOlder && onLoadOlder) {
           // 记下插入前的滚动高度；新内容进来后按差值补 scrollTop
           adjust.current = target.scrollHeight;
@@ -242,9 +207,7 @@ export function Transcript({
       }}
     >
       <div ref={container} className="mx-auto w-full max-w-[860px] px-4 py-5">
-        {/* md:pl-7 = 给左侧时间轴留的 28px 走廊；手机上这条路不画 */}
-        <div className="relative md:pl-7">
-          {turns.length > 1 && <TurnRailLine />}
+        <div className="relative">
           <div className="space-y-4">
             {loading && <TranscriptSkeleton />}
 
@@ -270,14 +233,7 @@ export function Transcript({
                 (previousAt === undefined || turn.startAt - previousAt > DIVIDER_GAP);
 
               return (
-                <div
-                  key={turn.key}
-                  ref={(el) => {
-                    if (el) turnRefs.current.set(turn.key, el);
-                    else turnRefs.current.delete(turn.key);
-                  }}
-                  className="relative space-y-4"
-                >
+                <div key={turn.key} className="relative space-y-4">
                   {showDivider && (
                     <div className="flex justify-center">
                       <span className="rounded-full bg-muted/60 px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
@@ -286,16 +242,7 @@ export function Transcript({
                     </div>
                   )}
 
-                  {/* 时间轴的点跟着「你的这条消息」走：装在它外面，别被时间分隔线顶歪 */}
                   <div className="relative">
-                    {turn.user && (
-                      <TurnMarker
-                        label={blocksToQuote(turn.user.blocks, 60)}
-                        active={activeKey === turn.key}
-                        onJump={() => jumpTo(turn.key)}
-                      />
-                    )}
-
                     {isLast && busy ? (
                     // 进行中：过程**照样显示**，只是换成实时轨道（思考中/执行中 + 逐条落下的步骤）；
                     // 最终正文的流式展示交给 LiveRow。以前这里把过程整个藏起来，

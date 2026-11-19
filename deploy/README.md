@@ -65,6 +65,28 @@ curl -X POST https://piihub.icu/api/cwd \
 | `caddy.service` | `/etc/systemd/system/caddy.service` |
 | `deploy.sh` | 在服务器上执行，把仓库代码变成运行中的容器 |
 
+`Caddyfile` 主文件归 pii 独占（部署时整份覆盖）；其他站点的站点块放在
+`/etc/caddy/sites/*.caddy`，由主文件 `import` 引入，pii 部署碰不到它们。
+目录为空时 Caddy 只告警不报错。
+
+> 2026-11-09 与 11-16 两次事故：所有站点共用一个 Caddyfile，pii 部署整份覆盖后
+> 抹掉了另外四行 `import`，shanshui / odo / grafana / tesla 的 HTTPS 随之中断。
+
+### 部署边界（硬规则）
+
+一台机器住着多个项目，pii 的部署**只允许影响自己**：
+
+1. **一个项目一个文件** —— pii 只写 `/etc/caddy/Caddyfile`（归它独占）和
+   `/etc/caddy/sites/pii*.caddy`；别的站点在 `/etc/caddy/sites/<项目>.caddy`，各自部署各自写。
+2. **共享文件只读** —— 入口配置文件只有「主人」能整份覆盖；别人的部署最多 `caddy validate`，
+   不许 `install`。
+3. **部署前后自检** —— 开始时 `site-guard snapshot`，reload 后 `site-guard verify`；
+   任何站点从「通」变「不通」，`deploy.sh` 直接失败。
+
+护栏脚本装在 `/usr/local/bin/site-guard`，站点清单在 `/etc/site-guard/hosts.txt`
+（**新增站点必须登记**，否则护栏看不见它）。`/etc/cron.d/site-guard` 每 10 分钟巡检一次，
+异常写 `/var/log/site-guard.log`。
+
 ## 首次配置
 
 ```bash

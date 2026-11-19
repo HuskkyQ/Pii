@@ -57,6 +57,12 @@ echo "    8443 健康 ✅"
 
 # ---------------------------------------------------------------- 4. Caddy 配置
 say "4/6 同步 Caddy 配置"
+# 部署前给全机所有站点拍快照：之后谁从「通」变「不通」，都要算在这次部署头上。
+if command -v site-guard >/dev/null 2>&1; then
+  site-guard snapshot >/dev/null || true
+else
+  echo "    !! 未安装 site-guard，本次跳过站点隔离护栏（清单见 /etc/site-guard/hosts.txt）"
+fi
 if ! cmp -s deploy/Caddyfile /etc/caddy/Caddyfile; then
   cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
   install -m 0644 deploy/Caddyfile /etc/caddy/Caddyfile
@@ -66,6 +72,11 @@ else
 fi
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || die "Caddyfile 校验失败"
 systemctl reload caddy
+
+# 只允许影响自己：别的站点要是被这次 reload 打断了，直接失败。
+if command -v site-guard >/dev/null 2>&1; then
+  site-guard verify || die "这次部署影响到了别的站点（见上），用 /etc/caddy/Caddyfile.bak.* 回滚"
+fi
 
 # ---------------------------------------------------------------- 5. 自检
 say "5/6 全链路自检"

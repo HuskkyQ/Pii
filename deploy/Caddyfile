@@ -1,7 +1,14 @@
-# /etc/caddy/Caddyfile —— 线上（阿里云 47.102.100.84）真实使用的版本
+# /etc/caddy/Caddyfile —— pii 项目「拥有」的文件，deploy/deploy.sh 会整份覆盖它
 #
-# 作用：https://piihub.icu (443，Let's Encrypt 真证书) → 本地 pii 容器 8443 (明文 http)
-# 为什么需要这一层：pii 自己只在 8443 跑 http，而 PWA / Web Push 要求 HTTPS 安全上下文。
+# 结构（方案 B）：
+#   1. 全局块：只放跨站点的设置
+#   2. piihub.icu / www.piihub.icu：pii 自己的站点
+#   3. import /etc/caddy/sites/*.caddy：其他项目各自维护的站点文件
+#
+# 为什么这样拆：pii 部署时会把本文件整份装到 /etc/caddy/Caddyfile。
+# 过去别的站点（shanshui/odo/grafana/tesla）也写在同一份文件里，于是每次 pii 部署
+# 都被一并抹掉（2026-11-09、2026-11-16 各一次）。现在它们挪到 sites/ 下，
+# pii 的部署只能覆盖自己这一段，物理上不可能再误删别人。
 
 {
 	# 80 端口被 teslamate-grafana 占用，Caddy 不能去 bind :80。
@@ -24,3 +31,7 @@ piihub.icu, www.piihub.icu {
 		flush_interval -1
 	}
 }
+
+# 其他站点：一个站点一个文件，由各自项目维护，pii 部署不会碰它们。
+# 目录为空时 Caddy 只告警不报错，新机器照样能起来。
+import /etc/caddy/sites/*.caddy

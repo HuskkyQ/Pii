@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalCards } from "@/components/ApprovalCards";
 import { ConversationsPanel } from "@/components/ConversationsPanel";
@@ -18,6 +18,8 @@ import { useConversations } from "@/hooks/useConversations";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePii } from "@/hooks/usePii";
 import { usePolicy } from "@/hooks/usePolicy";
+import { imageSrc, type ImagePart } from "@/lib/image";
+import type { Block } from "@/lib/types";
 import { toast } from "sonner";
 
 /** URL 里的 `?c=<id>` 是唯一的路由状态：刷新、分享、主屏幕重启都靠它。 */
@@ -262,6 +264,54 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [entryCount, refresh]);
 
+  /*
+   * 乐观回显（local echo）。
+   *
+   * 为什么需要：客户端按纪律不做乐观合并（快照是账单），而快照是整份推的 ——
+   * 这条会话一帧 260KB 左右，手机上要一两秒才下载完。于是点发送之后，
+   * 输入框清空了、列表里却什么都没有，看起来像没发出去。
+   *
+   * 做法：发送前先在本地插一条「回声」，它只是**界面上的临时气泡**，
+   * 一旦快照里出现比它更新的 pi.user 条目就撤掉 —— 权威数据始终是快照。
+   * 发送失败（onEcho 返回的 undo 被调用）也撤掉。
+   */
+  const echoSeq = useRef(0);
+  const [echo, setEcho] = useState<{ seq: number; blocks: Block[]; afterId: number; queued: boolean } | null>(
+    null,
+  );
+
+  const onEcho = useCallback(
+    (text: string, images: ImagePart[] = []) => {
+      const blocks: Block[] = [];
+      if (text) blocks.push({ type: "text", text });
+      for (const image of images) {
+        blocks.push({ type: "image", mimeType: image.mimeType, url: imageSrc(image) });
+      }
+      if (blocks.length === 0) return () => {};
+
+      const seq = ++echoSeq.current;
+      // 记下当前最新条目 id：之后出现更大的 pi.user 条目，说明这条真的落库了
+      const afterId = Math.max(0, ...(snapshot?.entries ?? []).map((entry) => entry.id));
+      setEcho({ seq, blocks, afterId, queued: Boolean(snapshot?.live) });
+      return () => setEcho((current) => (current?.seq === seq ? null : current));
+    },
+    [snapshot],
+  );
+
+  // 快照确认这条消息已经进库 → 撤掉临时气泡
+  useEffect(() => {
+    if (!echo) return;
+    const landed = (snapshot?.entries ?? []).some(
+      (entry) => entry.kind === "pi.user" && entry.id > echo.afterId,
+    );
+    if (landed) setEcho(null);
+  }, [snapshot, echo]);
+
+  // 换会话时不能把上一条会话的回声带过去
+  useEffect(() => {
+    setEcho(null);
+  }, [activeId]);
+
   return (
     <TooltipProvider delayDuration={250}>
       {/*
@@ -322,6 +372,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               onLoadOlder={() => void loadOlder()}
               onQuote={(text) => setQuote(text)}
+              pending={echo ? { blocks: echo.blocks, queued: echo.queued } : null}
               runError={snapshot?.runError ?? null}
               onRetry={() => {
                 const last = [...(snapshot?.entries ?? [])].reverse().find((entry) => entry.kind === "pi.user");
@@ -348,6 +399,7 @@ export default function App() {
               permissionPreset={permissionPreset}
               quote={quote}
               onClearQuote={() => setQuote(null)}
+              onEcho={onEcho}
             />
           </div>
         </div>

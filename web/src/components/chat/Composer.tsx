@@ -28,6 +28,11 @@ interface ComposerProps {
   /** 被引用的原文（点了某条消息的引用按钮） */
   quote?: string | null;
   onClearQuote?: () => void;
+  /**
+   * 发送前先在界面上回声这条消息（乐观回显）。
+   * 返回「撤回」函数：发送失败时调用，把临时气泡撤掉。
+   */
+  onEcho?: (text: string, images: ImagePart[]) => () => void;
 }
 
 const MAX_IMAGES = 4;
@@ -46,6 +51,7 @@ export function Composer({
   permissionPreset,
   quote,
   onClearQuote,
+  onEcho,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImagePart[]>([]);
@@ -106,15 +112,17 @@ export function Composer({
       if ((!value && images.length === 0) || busy) return;
       setBusy(true);
       setError(null);
+      // 引用做成 markdown 引用块：模型看得见、历史里也读得懂，还不用改存储结构
+      const quoted = quote ? `${quote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n` : "";
+      const undoEcho = onEcho?.(quoted + value, images);
       try {
-        // 引用做成 markdown 引用块：模型看得见、历史里也读得懂，还不用改存储结构
-        const quoted = quote ? `${quote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n` : "";
         await prompt(quoted + value, conversationId, undefined, images, mode);
         setText("");
         setImages([]);
         onClearQuote?.();
         onSent?.();
       } catch (cause) {
+        undoEcho?.();
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         setBusy(false);

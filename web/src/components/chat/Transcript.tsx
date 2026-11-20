@@ -85,6 +85,7 @@ export function Transcript({
   onQuote,
   runError,
   onRetry,
+  pending,
 }: {
   snapshot: Snapshot | null;
   /** 往前翻出来的历史（拼在快照窗口前面） */
@@ -96,6 +97,11 @@ export function Transcript({
   /** 上一轮失败的原因（模型不可达等） */
   runError?: { taskId: number; message: string; reason?: string; at?: number } | null;
   onRetry?: () => void;
+  /**
+   * 刚发出去、还没进快照的那条消息（乐观回显）。
+   * 它只是一个临时气泡：快照里有更新的 pi.user 条目就由上层撤掉。
+   */
+  pending?: { blocks: Entry["blocks"]; queued?: boolean } | null;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -107,7 +113,7 @@ export function Transcript({
 
   useEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
-  }, [snapshot]);
+  }, [snapshot, pending]);
 
   // Radix 的滚动发生在内部的 viewport 上，拿不到就直接操作它
   useEffect(() => {
@@ -278,6 +284,17 @@ export function Transcript({
                 </div>
               );
             })}
+
+            {pending && (
+              <div className="flex flex-col items-end gap-1">
+                <div className="w-full opacity-55">
+                  <EntryRow entry={{ id: -1, kind: "pi.user", blocks: pending.blocks }} />
+                </div>
+                <span className="pr-1 text-[11px] text-muted-foreground">
+                  {pending.queued ? "已排队，等当前回合跑完" : "发送中…"}
+                </span>
+              </div>
+            )}
 
             {live && <LiveRow live={live} />}
             {!live && <RunErrorBanner error={runError ?? null} onRetry={onRetry} />}

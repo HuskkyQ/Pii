@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -101,7 +102,7 @@ export function Transcript({
    * 刚发出去、还没进快照的那条消息（乐观回显）。
    * 它只是一个临时气泡：快照里有更新的 pi.user 条目就由上层撤掉。
    */
-  pending?: { blocks: Entry["blocks"]; queued?: boolean } | null;
+  pending?: { blocks: Entry["blocks"]; queued?: boolean; phase?: "sending" | "thinking" } | null;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -287,11 +288,19 @@ export function Transcript({
 
             {pending && (
               <div className="flex flex-col items-end gap-1">
-                <div className="w-full opacity-55">
-                  <EntryRow entry={{ id: -1, kind: "pi.user", blocks: pending.blocks }} />
-                </div>
-                <span className="pr-1 text-[11px] text-muted-foreground">
-                  {pending.queued ? "已排队，等当前回合跑完" : "发送中…"}
+                {/* 气泡只在「还没进快照」时出现；进库后真消息自己会显示，别画两份 */}
+                {pending.phase !== "thinking" && (
+                  <div className="w-full opacity-55">
+                    <EntryRow entry={{ id: -1, kind: "pi.user", blocks: pending.blocks }} />
+                  </div>
+                )}
+                <span className="flex items-center gap-1.5 pr-1 text-[11px] text-muted-foreground">
+                  {pending.phase === "thinking" && <Loader2 className="size-3 animate-spin" />}
+                  {pending.phase === "thinking"
+                    ? "模型思考中…"
+                    : pending.queued
+                      ? "已排队，等当前回合跑完"
+                      : "发送中…"}
                 </span>
               </div>
             )}

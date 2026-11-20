@@ -1,17 +1,41 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+/** 构建指纹：客户端会把它一起上报，用来区分「改了没生效」和「跑的是上一版」。 */
+const BUILD = new Date().toISOString().slice(0, 19);
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  /*
-   * 构建指纹：客户端会把 BUILD 一起上报。
-   * 为什么需要它：PWA 有 service worker + HTTP 缓存，我经常分不清
-   * 「改了没生效」和「手机跑的还是上一版」——有了这个一眼就能判断。
-   */
+  plugins: [
+    react(),
+    tailwindcss(),
+    /*
+     * 让 service worker 的缓存版本跟着构建走。
+     *
+     * 为什么必须这样：SW 的导航是「缓存优先」，装过一次的手机永远先拿缓存里的旧壳。
+     * 旧壳引用旧 assets，于是你部署十次，手机上跑的还是第一次那个版本。
+     * 版本号一变，浏览器才会装新 SW → 新版 skipWaiting + clients.claim →
+     * 页面收到 controllerchange 自动 reload（见 main.tsx），一次打开就切过去。
+     *
+     * 注意 public/ 是构建结束后被原样拷进 dist 的，generateBundle 里看不到它，
+     * 只能在 closeBundle 里改。
+     */
+    {
+      name: "stamp-sw-version",
+      apply: "build",
+      closeBundle() {
+        const file = path.resolve(__dirname, "dist/sw.js");
+        const source = readFileSync(file, "utf8");
+        const next = source.replace(/const VERSION = "[^"]*"/, `const VERSION = "pii-${BUILD}"`);
+        if (next === source) this.warn("sw.js 里没找到 VERSION 常量，缓存不会随构建失效");
+        writeFileSync(file, next);
+      },
+    },
+  ],
   define: {
-    __BUILD__: JSON.stringify(new Date().toISOString().slice(0, 19)),
+    __BUILD__: JSON.stringify(BUILD),
   },
   build: {
     /*

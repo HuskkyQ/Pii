@@ -276,9 +276,14 @@ export default function App() {
    * 发送失败（onEcho 返回的 undo 被调用）也撤掉。
    */
   const echoSeq = useRef(0);
-  const [echo, setEcho] = useState<{ seq: number; blocks: Block[]; afterId: number; queued: boolean } | null>(
-    null,
-  );
+  const [echo, setEcho] = useState<{
+    seq: number;
+    blocks: Block[];
+    afterId: number;
+    queued: boolean;
+    /** sending = 还没进快照；thinking = 进快照了，但模型还没开始输出 */
+    phase: "sending" | "thinking";
+  } | null>(null);
 
   const onEcho = useCallback(
     (text: string, images: ImagePart[] = []) => {
@@ -292,19 +297,29 @@ export default function App() {
       const seq = ++echoSeq.current;
       // 记下当前最新条目 id：之后出现更大的 pi.user 条目，说明这条真的落库了
       const afterId = Math.max(0, ...(snapshot?.entries ?? []).map((entry) => entry.id));
-      setEcho({ seq, blocks, afterId, queued: Boolean(snapshot?.live) });
+      setEcho({ seq, blocks, afterId, queued: Boolean(snapshot?.live), phase: "sending" });
       return () => setEcho((current) => (current?.seq === seq ? null : current));
     },
     [snapshot],
   );
 
-  // 快照确认这条消息已经进库 → 撤掉临时气泡
+  /*
+   * 回声的两段生命周期：
+   *   sending  → 快照确认这条消息进库（出现 id 更大的 pi.user 条目）
+   *   thinking → 模型还没开口（没有 pi.live、也没有新的 pi.assistant 条目）
+   * 一旦 live 或回答出现，就交给真正的渲染，回声退场。
+   */
   useEffect(() => {
     if (!echo) return;
-    const landed = (snapshot?.entries ?? []).some(
-      (entry) => entry.kind === "pi.user" && entry.id > echo.afterId,
-    );
-    if (landed) setEcho(null);
+    const entries = snapshot?.entries ?? [];
+    const live = Boolean(snapshot?.live);
+    const answered = entries.some((entry) => entry.kind === "pi.assistant" && entry.id > echo.afterId);
+    if (live || answered || snapshot?.runError) {
+      setEcho(null);
+      return;
+    }
+    const landed = entries.some((entry) => entry.kind === "pi.user" && entry.id > echo.afterId);
+    if (landed && echo.phase === "sending") setEcho((current) => (current ? { ...current, phase: "thinking" } : current));
   }, [snapshot, echo]);
 
   // 换会话时不能把上一条会话的回声带过去
@@ -372,7 +387,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               onLoadOlder={() => void loadOlder()}
               onQuote={(text) => setQuote(text)}
-              pending={echo ? { blocks: echo.blocks, queued: echo.queued } : null}
+              pending={echo ? { blocks: echo.blocks, queued: echo.queued, phase: echo.phase } : null}
               runError={snapshot?.runError ?? null}
               onRetry={() => {
                 const last = [...(snapshot?.entries ?? [])].reverse().find((entry) => entry.kind === "pi.user");

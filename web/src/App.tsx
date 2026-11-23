@@ -314,15 +314,27 @@ export default function App() {
   /*
    * 回声的两段生命周期：
    *   sending  → 快照确认这条消息进库（出现 id 更大的 pi.user 条目）
-   *   thinking → 模型还没开口（没有 pi.live、也没有新的 pi.assistant 条目）
-   * 一旦 live 或回答出现，就交给真正的渲染，回声退场。
+   *   thinking → 模型还没开口
+   *
+   * 什么时候退场：**界面真的出现了东西**才退，而不是「live 一存在就退」。
+   * pi.live 在模型开口前就已经有了，但那时 ProcessRail 里没有任何步骤、
+   * LiveRow 也没有正文 —— 两者都渲染成空，屏幕上就是一段什么都没有的空白，
+   * 比回声在的时候更糟。
    */
   useEffect(() => {
     if (!echo) return;
     const entries = snapshot?.entries ?? [];
-    const live = Boolean(snapshot?.live);
+    const live = snapshot?.live;
+    // 排队的时候 live 属于「上一轮」，不能用它判断这一轮开口了没有
+    const talked =
+      !echo.queued &&
+      live &&
+      ((live.message?.blocks ?? []).some(
+        (block) => (block.type === "text" || block.type === "thinking") && block.text.trim().length > 0,
+      ) ||
+        (live.tools ?? []).some((tool) => tool.status !== "done"));
     const answered = entries.some((entry) => entry.kind === "pi.assistant" && entry.id > echo.afterId);
-    if (live || answered || snapshot?.runError) {
+    if (talked || answered || snapshot?.runError) {
       setEcho(null);
       return;
     }

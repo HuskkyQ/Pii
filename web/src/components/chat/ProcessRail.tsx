@@ -74,7 +74,7 @@ export function ProcessRail({
   const expanded = live ? true : (open ?? internal);
   const summary = summarizeSteps(steps);
   const body = (
-    <div className="mt-1 space-y-1 border-l border-border/60 pl-3">
+    <div className="space-y-1 border-l border-border/60 pl-3">
       {steps.map((step) => (
         <StepRow key={step.key} step={step} />
       ))}

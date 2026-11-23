@@ -160,23 +160,20 @@ function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string)
     <>
       {/* 哨兵：它滚出视口顶部，就说明提问已经被钉住了 */}
       <div ref={sentinel} aria-hidden className="h-px" />
-      <div
-        className={cn(
-          "sticky top-0 z-10 flex flex-col items-end gap-1 pt-1",
-          /*
-           * 钉住时铺一条**通栏**的底色，而不是只盖住内容列。
-           *
-           * 内容列是 max-w-[860px] 居中的：只给列宽上色，左右两头会露出
-           * 一圈没盖住的边，看起来像贴了一块矩形补丁（就是「割裂感」）。
-           * 用 calc(50% - 50vw) 把盒子向两侧撑到视口边，
-           * 再用同样的值补回内边距，文字位置一个像素都不动。
-           */
-          stuck
-            ? "mx-[calc(50%-50cqw)] border-b border-border/40 bg-background px-[calc(50cqw-50%)] pb-2"
-            : "pb-3",
-        )}
-      >
-        <div className="max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground">
+      {/*
+       * 钉住时**不铺底色**：气泡本身就是不透明的，够用了；
+       * 加一条通栏底色反而会在一片流动的光晕里贴出一块死板的矩形。
+       * 只给气泡加一点投影，让它像是浮在滚动的正文之上。
+       */}
+      {/* pb-1：下面还有轮次容器的 space-y-4 和轨道自己的间距，
+          这里再留 12px 会叠成一条比正文行距还宽的空白带 */}
+      <div className="sticky top-0 z-10 flex flex-col items-end gap-1 pb-1 pt-1">
+        <div
+          className={cn(
+            "max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground",
+            stuck && "shadow-lg shadow-black/25",
+          )}
+        >
           {entry.blocks.map((block, index) => {
             if (block.type === "text") {
               return (
@@ -203,7 +200,11 @@ function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string)
             return null;
           })}
         </div>
-        <EntryActions entry={entry} onQuote={onQuote} align="end" />
+        {/* 钉住时收起时间戳/复制：它们会浮在滚动的正文上，读起来很脏。
+            用 opacity 而不是卸载 —— 卸载会改变高度，整块内容会往上跳一下。 */}
+        <div className={cn("transition-opacity", stuck && "pointer-events-none opacity-0")}>
+          <EntryActions entry={entry} onQuote={onQuote} align="end" />
+        </div>
       </div>
     </>
   );

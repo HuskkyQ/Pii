@@ -28,12 +28,7 @@ function ScrollArea({
          * 在 430 宽的手机上文字按 828 折行，右边直接被 overflow:hidden 切掉。
          * 手写在 inline style 上，所以必须用 !important 才能盖过它。
          */
-        /*
-         * [container-type:inline-size]：让里面的东西能用 cqw 拿到「这个滚动区有多宽」。
-         * vw 是**窗口**宽度 —— 侧栏展开时窗口 1174、滚动区只有 934，
-         * 用 vw 做通栏会横向溢出 240px。
-         */
-        className="size-full rounded-[inherit] overscroll-contain transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [container-type:inline-size] [&>div]:!block [&>div]:!w-full"
+        className="size-full rounded-[inherit] overscroll-contain transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:!block [&>div]:!w-full"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

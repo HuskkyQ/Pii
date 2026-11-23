@@ -1,4 +1,4 @@
-import { Menu, PanelLeftClose, PanelLeftOpen, Pencil } from "lucide-react";
+import { FileDiff, Menu, PanelLeftClose, PanelLeftOpen, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,10 @@ interface StatusBarProps {
   onRename?: (title: string) => Promise<void>;
   /** 通知开关要记住当前会话，订阅时带上 */
   conversationId?: number;
+  /** 工作目录里未提交的文件数；0 不显示角标 */
+  changes?: number;
+  /** 打开变更审阅面板；不传就不显示这个入口 */
+  onOpenChanges?: () => void;
 }
 
 export function StatusBar({
@@ -53,6 +57,8 @@ export function StatusBar({
   sidebarCollapsed = false,
   onRename,
   conversationId,
+  changes = 0,
+  onOpenChanges,
 }: StatusBarProps) {
   const model = snapshot?.agent?.model;
   const usage = formatUsage(snapshot);
@@ -203,6 +209,24 @@ export function StatusBar({
       <span className="shrink-0 whitespace-nowrap font-mono text-[11.5px] text-muted-foreground/60">
         {usage}
       </span>
+
+      {onOpenChanges && (
+        <Button
+          size="icon"
+          variant="ghost"
+          className="relative size-8 shrink-0"
+          onClick={onOpenChanges}
+          aria-label={changes > 0 ? `查看文件改动（${changes} 个）` : "查看文件改动"}
+          title="文件改动"
+        >
+          <FileDiff className="size-4" />
+          {changes > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 min-w-[14px] rounded-full bg-primary px-1 text-center text-[9.5px] font-medium leading-[14px] text-primary-foreground">
+              {changes > 9 ? "9+" : changes}
+            </span>
+          )}
+        </Button>
+      )}
 
       <PushToggle conversationId={conversationId} />
       {/* 退出登录：只在开了鉴权时出现，且只在桌面 —— 手机状态栏塞不下这么多按钮 */}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApprovalCards } from "@/components/ApprovalCards";
+import { ChangesPanel } from "@/components/ChangesPanel";
 import { ConversationsPanel } from "@/components/ConversationsPanel";
 import { CwdPicker } from "@/components/CwdPicker";
 import { DebugHud } from "@/components/DebugHud";
@@ -13,7 +14,14 @@ import { Composer } from "@/components/chat/Composer";
 import { Transcript } from "@/components/chat/Transcript";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { deleteConversation, getLastConversation, prompt, renameConversation, setLastConversation } from "@/lib/api";
+import {
+  deleteConversation,
+  getLastConversation,
+  gitStatus,
+  prompt,
+  renameConversation,
+  setLastConversation,
+} from "@/lib/api";
 import { useConversations } from "@/hooks/useConversations";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePii } from "@/hooks/usePii";
@@ -327,6 +335,35 @@ export default function App() {
     setEcho(null);
   }, [activeId]);
 
+  /*
+   * 变更审阅的角标：工作目录里有多少个未提交的文件。
+   * 没有推送机制（git 状态不经过 agent 的快照），所以轮询 + 每轮跑完再刷一次。
+   */
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
+
+  const refreshChanges = useCallback(() => {
+    if (currentId === undefined) {
+      setChangeCount(0);
+      return;
+    }
+    void gitStatus(currentId)
+      .then((status) => setChangeCount(status.files.length))
+      .catch(() => setChangeCount(0));
+  }, [currentId]);
+
+  useEffect(() => {
+    refreshChanges();
+    const timer = setInterval(refreshChanges, 20_000);
+    return () => clearInterval(timer);
+  }, [refreshChanges]);
+
+  // 一轮跑完（live 从有到无）通常是 agent 刚改过文件，立刻刷一次
+  const turnActive = Boolean(snapshot?.live);
+  useEffect(() => {
+    if (!turnActive) refreshChanges();
+  }, [turnActive, refreshChanges]);
+
   return (
     <TooltipProvider delayDuration={250}>
       {/*
@@ -374,6 +411,8 @@ export default function App() {
             connection={connection}
             snapshot={snapshot}
             title={title}
+            changes={changeCount}
+            onOpenChanges={() => setChangesOpen(true)}
             onMenuClick={handleMenuClick}
             sidebarCollapsed={sidebarCollapsed}
             onRename={currentId === undefined ? undefined : rename}
@@ -457,6 +496,13 @@ export default function App() {
         />
 
         <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+
+        <ChangesPanel
+          open={changesOpen}
+          onClose={() => setChangesOpen(false)}
+          conversationId={currentId}
+          onChanged={refreshChanges}
+        />
 
         <DebugHud />
 

@@ -286,3 +286,48 @@ export function subscribe(handlers: StreamHandlers, conversationId?: number): ()
 
   return () => es.close();
 }
+
+/* ---------- 变更审阅（git） ---------- */
+
+export interface GitFile {
+  path: string;
+  /** M 修改 / A 新增 / D 删除 / R 重命名 / ? 未跟踪 */
+  status: string;
+  staged: boolean;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface GitStatus {
+  repo: boolean;
+  cwd: string;
+  branch?: string;
+  files: GitFile[];
+}
+
+function query(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : "";
+}
+
+export function gitStatus(conversationId?: number) {
+  return getJson<GitStatus>(`/api/git/status${query({ c: conversationId })}`);
+}
+
+export function gitDiff(path: string, conversationId?: number) {
+  return getJson<{ path: string; diff: string; truncated: boolean }>(
+    `/api/git/diff${query({ c: conversationId, path })}`,
+  );
+}
+
+export function gitRevert(path: string, conversationId?: number) {
+  return postJson<{ ok: boolean }>("/api/git/revert", { path, conversationId });
+}
+
+export function gitCommit(message: string, conversationId?: number) {
+  return postJson<{ ok: boolean; commit: string }>("/api/git/commit", { message, conversationId });
+}

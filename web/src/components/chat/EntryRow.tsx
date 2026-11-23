@@ -1,5 +1,5 @@
 import { Check, Copy, Quote } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Markdown } from "./Markdown";
@@ -114,13 +114,68 @@ function EntryActions({
   );
 }
 
-/** 一条 entry → 一组 block。角色决定气泡样式。 */
-export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
-  const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "assistant" : "meta";
+/**
+ * 用户的提问。滚动时钉在顶部 —— 读长回答时不用回头找「我问了什么」。
+ *
+ * 只靠 CSS sticky：粘性范围是它所在的那一轮，滚到下一轮就自然被顶出去，
+ * 接管的是下一个提问；回答比屏幕短时根本滚不过它，也就不会钉。
+ *
+ * 「钉住了没有」必须用哨兵 + IntersectionObserver 判断（纯 CSS 做不到）。
+ * 因为只有钉住时才该铺那层渐变底 —— 否则每个提问上方都会多一条常驻色带。
+ */
+function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string) => void }) {
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const [stuck, setStuck] = useState(false);
+  /** 图片平时只显示小缩略图，点一下才展开到原尺寸 —— 整条提问不再被一张图占满 */
+  const [expanded, setExpanded] = useState(false);
 
-  if (role === "user") {
-    return (
-      <div className="group flex flex-col items-end gap-1">
+  useEffect(() => {
+    const marker = sentinel.current;
+    if (!marker) return;
+    const root = marker.closest<HTMLElement>("[data-radix-scroll-area-viewport]");
+    if (!root) return;
+
+    /*
+     * 直接比较「哨兵有没有跑到视口上方」。
+     *
+     * 为什么不用 IntersectionObserver：它只在比例跨过阈值时回调，
+     * 屏幕下方那些「从来没进过视野」的提问会一直保持上一次的状态，
+     * 结果每个提问都提前铺上了渐变底。这里每次滚动都算一次，
+     * 一屏也就十来个气泡，代价可以忽略。
+     */
+    const update = () => {
+      const rootTop = root.getBoundingClientRect().top;
+      setStuck(marker.getBoundingClientRect().top < rootTop);
+    };
+    update();
+    root.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      root.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  return (
+    <>
+      {/* 哨兵：它滚出视口顶部，就说明提问已经被钉住了 */}
+      <div ref={sentinel} aria-hidden className="h-px" />
+      <div
+        className={cn(
+          "sticky top-0 z-10 flex flex-col items-end gap-1 pt-1",
+          /*
+           * 钉住时铺一条**通栏**的底色，而不是只盖住内容列。
+           *
+           * 内容列是 max-w-[860px] 居中的：只给列宽上色，左右两头会露出
+           * 一圈没盖住的边，看起来像贴了一块矩形补丁（就是「割裂感」）。
+           * 用 calc(50% - 50vw) 把盒子向两侧撑到视口边，
+           * 再用同样的值补回内边距，文字位置一个像素都不动。
+           */
+          stuck
+            ? "mx-[calc(50%-50cqw)] border-b border-border/40 bg-background px-[calc(50cqw-50%)] pb-2"
+            : "pb-3",
+        )}
+      >
         <div className="max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground">
           {entry.blocks.map((block, index) => {
             if (block.type === "text") {
@@ -137,7 +192,11 @@ export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
                   src={block.url}
                   alt="上传的图片"
                   loading="lazy"
-                  className="mb-1.5 max-h-72 w-auto max-w-full rounded-xl border object-contain"
+                  onClick={() => setExpanded((value) => !value)}
+                  className={cn(
+                    "mb-1.5 w-auto cursor-pointer rounded-xl border object-contain",
+                    expanded ? "max-h-72 max-w-full" : "max-h-[72px] max-w-[96px]",
+                  )}
                 />
               );
             }
@@ -146,7 +205,16 @@ export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
         </div>
         <EntryActions entry={entry} onQuote={onQuote} align="end" />
       </div>
-    );
+    </>
+  );
+}
+
+/** 一条 entry → 一组 block。角色决定气泡样式。 */
+export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
+  const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "assistant" : "meta";
+
+  if (role === "user") {
+    return <UserBubble entry={entry} onQuote={onQuote} />;
   }
 
   if (role === "meta") {

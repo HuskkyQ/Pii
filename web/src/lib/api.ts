@@ -331,3 +331,17 @@ export function gitRevert(path: string, conversationId?: number) {
 export function gitCommit(message: string, conversationId?: number) {
   return postJson<{ ok: boolean; commit: string }>("/api/git/commit", { message, conversationId });
 }
+
+/* ---------- 全文搜索 ---------- */
+
+export interface SearchHit {
+  conversationId: number;
+  entryId: number;
+  role: "user" | "assistant";
+  snippet: string;
+  at?: number;
+}
+
+export function searchMessages(text: string, limit = 40) {
+  return getJson<{ query: string; hits: SearchHit[] }>(`/api/search${query({ q: text, limit })}`);
+}

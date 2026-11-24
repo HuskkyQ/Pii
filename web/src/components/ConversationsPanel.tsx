@@ -4,6 +4,7 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  Search as SearchIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -24,6 +25,8 @@ interface ListProps {
   onDelete?: (id: number) => Promise<void>;
   /** 打开全局记忆面板（入口放在侧栏底部，桌机和手机抽屉共用） */
   onOpenMemory?: () => void;
+  /** 打开全文搜索面板 */
+  onOpenSearch?: () => void;
 }
 
 interface PanelProps extends ListProps {
@@ -47,6 +50,7 @@ function ConversationList({
   creating,
   onDelete,
   onOpenMemory,
+  onOpenSearch,
 }: ListProps) {
   // 两段式确认：第一下只把这一行变成「确认删除？」，第二下才真删。
   // 比 window.confirm 好在：不用弹窗、手指不用来回移动、误触也能退出。
@@ -58,6 +62,17 @@ function ConversationList({
         <span className="flex-1 text-[11.5px] font-medium uppercase tracking-wider text-muted-foreground/70">
           会话
         </span>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          onClick={onOpenSearch}
+          disabled={!onOpenSearch}
+          aria-label="搜索所有会话"
+          title="搜索所有会话"
+        >
+          <SearchIcon className="size-3.5" />
+        </Button>
         <Button
           size="icon"
           variant="ghost"

@@ -167,7 +167,7 @@ function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string)
        */}
       {/* pb-1：下面还有轮次容器的 space-y-4 和轨道自己的间距，
           这里再留 12px 会叠成一条比正文行距还宽的空白带 */}
-      <div className="sticky top-0 z-10 flex flex-col items-end gap-1 pb-1 pt-1">
+      <div data-entry-id={entry.id} className="sticky top-0 z-10 flex flex-col items-end gap-1 pb-1 pt-1">
         <div
           className={cn(
             "max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground",
@@ -225,7 +225,7 @@ export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
   }
 
   return (
-    <div className="group text-foreground">
+    <div data-entry-id={entry.id} className="group text-foreground">
       <div className="min-w-0 space-y-1">
         {/* 这里只留正文与图片：过程（思考 / 工具）统一由 TurnRow 的轨道渲染 */}
         {entry.blocks.map((block, index) =>

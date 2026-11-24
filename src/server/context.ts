@@ -24,6 +24,7 @@ import { ApprovalBroker, type ApprovalRequest } from "./approvals.ts";
 import { openConversation, orphanSubagentIds } from "./conversations.ts";
 import { createAuth, type Auth } from "./auth.ts";
 import { keepAwake, type AwakeHandle } from "./awake.ts";
+import { openSearch, type SearchHit } from "./db/search.ts";
 import { openTaskQueries, type RunFailure } from "./db/tasks.ts";
 import { acquireLock } from "./db/lock.ts";
 import { LastConversation } from "./last-conversation.ts";
@@ -95,6 +96,8 @@ export interface AppContext {
   newestMtime: (dir: string) => number;
   taskDuration: (taskId: number) => number | undefined;
   latestFailure: (conversationId: number) => RunFailure | null;
+  /** 跨会话搜正文（提问 + 回答）；只读，惰性连接。 */
+  searchMessages: (query: string, limit?: number) => SearchHit[];
   /** /api/build 扫源码的基准目录（`src/`，含 agent/tools/config 等全部源码）。 */
   sourceDir: string;
   archiveDir: string;
@@ -296,6 +299,7 @@ export async function createContext(): Promise<AppContext> {
 
   /* 生成耗时 / 最近一次失败：都在 db/tasks.ts（惰性只读连接 + duration 缓存）。 */
   const { taskDuration, latestFailure, close: closeTaskQueries } = openTaskQueries(agent.dbPath);
+  const { search: searchMessages, close: closeSearch } = openSearch(agent.dbPath);
 
   /** 以下定义原本散落在 main.ts 的路由之间，现收进 ctx 供多个模块共用。 */
   /** 归档目录：`PII_ARCHIVE_DIR` → `<数据目录>/archive`（解析在 config.ts）。 */
@@ -423,6 +427,7 @@ export async function createContext(): Promise<AppContext> {
       console.error("  关闭 harness 失败（继续退出）:", error);
     }
     closeTaskQueries();
+    closeSearch();
     memory.close();
     releaseLock();
     console.log(`  已退出（${reason}）`);
@@ -479,5 +484,6 @@ export async function createContext(): Promise<AppContext> {
     newestMtime,
     taskDuration,
     latestFailure,
+    searchMessages,
   };
 }

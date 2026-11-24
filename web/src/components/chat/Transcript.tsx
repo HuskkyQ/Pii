@@ -87,6 +87,8 @@ export function Transcript({
   runError,
   onRetry,
   pending,
+  focusEntryId,
+  onFocused,
 }: {
   snapshot: Snapshot | null;
   /** 往前翻出来的历史（拼在快照窗口前面） */
@@ -103,6 +105,9 @@ export function Transcript({
    * 它只是一个临时气泡：快照里有更新的 pi.user 条目就由上层撤掉。
    */
   pending?: { blocks: Entry["blocks"]; queued?: boolean; phase?: "sending" | "thinking" } | null;
+  /** 从搜索结果跳过来时要定位的条目 id（不在当前窗口里就只切会话） */
+  focusEntryId?: number | null;
+  onFocused?: () => void;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -115,6 +120,46 @@ export function Transcript({
   useEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
   }, [snapshot, pending]);
+
+  /*
+   * 从搜索结果跳过来：滚到那条消息。
+   *
+   * 快照只带最近若干轮，目标很可能不在窗口里 —— 那就只切会话，不硬等。
+   * 试几次还找不到就放弃（清掉 focusEntryId），否则用户以后手动往上翻时
+   * 它会突然跳一下。
+   */
+  const focusRef = useRef<{ id: number | null; tries: number }>({ id: null, tries: 0 });
+  useEffect(() => {
+    if (focusEntryId == null) return;
+    // 换了目标就重新计数：切会话时会有好几次渲染拿不到新快照
+    if (focusRef.current.id !== focusEntryId) focusRef.current = { id: focusEntryId, tries: 0 };
+
+    const el = container.current?.querySelector<HTMLElement>(`[data-entry-id="${focusEntryId}"]`);
+    if (!el) {
+      focusRef.current.tries += 1;
+      if (focusRef.current.tries >= 12) {
+        focusRef.current = { id: null, tries: 0 };
+        onFocused?.();
+      }
+      return;
+    }
+    focusRef.current = { id: null, tries: 0 };
+    stick.current = false; // 别让"新快照自动滚到底"把视野抢回去
+
+    /*
+     * 不用 scrollIntoView：目标消息常常比视口还高，block:"center" 会把它的
+     * 开头推到屏幕上方看不见（实测 605px 的消息落在 -156px）。
+     * 这里自己算：让它贴着顶部往下 64px —— 给钉住的提问留出位置。
+     */
+    const view = viewport.current;
+    if (view) {
+      const offset = el.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop - 64;
+      view.scrollTo({ top: Math.max(0, offset) });
+    } else {
+      el.scrollIntoView({ block: "start" });
+    }
+    onFocused?.();
+  }, [focusEntryId, snapshot, onFocused]);
 
   // Radix 的滚动发生在内部的 viewport 上，拿不到就直接操作它
   useEffect(() => {

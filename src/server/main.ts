@@ -22,6 +22,7 @@ import { registerModels } from "./routes/models.ts";
 import { registerOps } from "./routes/ops.ts";
 import { registerPush } from "./routes/push.ts";
 import { registerRun } from "./routes/run.ts";
+import { registerSearch } from "./routes/search.ts";
 import { registerSession } from "./routes/session.ts";
 import { registerWorkspace } from "./routes/workspace.ts";
 
@@ -78,6 +79,7 @@ registerWorkspace(app, ctx);
 registerArchive(app, ctx);
 registerMemory(app, ctx);
 registerSession(app, ctx);
+registerSearch(app, ctx);
 registerRun(app, ctx);
 
 // 其他静态文件（图标、favicon…）兜底。

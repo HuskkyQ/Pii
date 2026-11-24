@@ -8,6 +8,7 @@ import { DebugHud } from "@/components/DebugHud";
 import { InstallHint } from "@/components/InstallHint";
 import { MemoryPanel } from "@/components/MemoryPanel";
 import { ModelPicker } from "@/components/ModelPicker";
+import { SearchPanel } from "@/components/SearchPanel";
 import { PermissionPicker } from "@/components/PermissionPicker";
 import { StatusBar } from "@/components/StatusBar";
 import { Composer } from "@/components/chat/Composer";
@@ -354,6 +355,13 @@ export default function App() {
   const [changesOpen, setChangesOpen] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
 
+  // 全文搜索：选中一条结果后切会话，并把 entryId 交给 Transcript 去滚动定位
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [focusEntry, setFocusEntry] = useState<number | null>(null);
+  // 必须是稳定引用：它是 Transcript 那个 effect 的依赖，每次渲染换个新函数
+  // 会让 effect 空转，把「找几次就放弃」的次数耗光
+  const clearFocusEntry = useCallback(() => setFocusEntry(null), []);
+
   const refreshChanges = useCallback(() => {
     if (currentId === undefined) {
       setChangeCount(0);
@@ -411,6 +419,10 @@ export default function App() {
             setMenuOpen(false);
             setMemoryOpen(true);
           }}
+          onOpenSearch={() => {
+            setMenuOpen(false);
+            setSearchOpen(true);
+          }}
         />
 
         {/*
@@ -438,6 +450,8 @@ export default function App() {
               loadingOlder={loadingOlder}
               onLoadOlder={() => void loadOlder()}
               onQuote={(text) => setQuote(text)}
+              focusEntryId={focusEntry}
+              onFocused={clearFocusEntry}
               pending={echo ? { blocks: echo.blocks, queued: echo.queued, phase: echo.phase } : null}
               runError={snapshot?.runError ?? null}
               onRetry={() => {
@@ -514,6 +528,17 @@ export default function App() {
           onClose={() => setChangesOpen(false)}
           conversationId={currentId}
           onChanged={refreshChanges}
+        />
+
+        <SearchPanel
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          items={items}
+          onPick={(conversationId, entryId) => {
+            setSearchOpen(false);
+            select(conversationId);
+            setFocusEntry(entryId);
+          }}
         />
 
         <DebugHud />

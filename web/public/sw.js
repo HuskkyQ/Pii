@@ -10,7 +10,7 @@
  * 会话数据必须永远走网络 —— 快照是权威，缓存会让界面显示过期状态。
  */
 const VERSION = "pii-v6";
-const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png?v=2"];
+const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192-v2.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -151,8 +151,8 @@ self.addEventListener("push", (event) => {
       body: payload.body || "",
       tag: payload.tag,
       data: { url, conversationId: payload.conversationId },
-      icon: "/icons/icon-192.png?v=2",
-      badge: "/icons/icon-192.png?v=2",
+      icon: "/icons/icon-192-v2.png",
+      badge: "/icons/icon-192-v2.png",
       // 同 tag 的新通知替换旧的（正在跑的那个会话不该刷出 10 条）
       renotify: Boolean(payload.tag),
     }),

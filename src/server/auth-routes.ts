@@ -96,9 +96,7 @@ export function registerAuth(app: Hono, ctx: AppContext): void {
     "/sw.js",
     "/favicon.ico",
     "/favicon.svg",
-    "/favicon-32.png",
     "/icon.svg",
-    "/apple-touch-icon.png",
   ];
   const isPublic = (path: string) =>
     PUBLIC.includes(path) || path.startsWith("/icons/") || path.startsWith("/assets/");

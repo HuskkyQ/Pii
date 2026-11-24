@@ -138,11 +138,43 @@ function UserBubble({
   hideStamp?: boolean;
 }) {
   const sentinel = useRef<HTMLDivElement | null>(null);
+  const bubble = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(false);
+  /**
+   * 单行消息做成胶囊（两端半圆），多行仍是「大圆角 + 右下收窄」。
+   *
+   * 为什么要按行数分：一句话的提问本来就短，给它 16px 圆角会像一个
+   * 被压扁的矩形；而两行以上做胶囊，圆角会吃掉首尾的字。
+   * 行数 CSS 判断不了，只能量高度：一行 = 行高 21.6 + 上下 padding 16 ≈ 38px。
+   *
+   * 图片**不在气泡里**（见下面的渲染），所以这里量的高度只反映文字行数 ——
+   * 否则一条「一句话 + 一张图」会量出一百多像素，被判成多行，造型就和
+   * 纯文字的单行消息对不上了。
+   */
+  const [pill, setPill] = useState(false);
   /** 图片平时只显示小缩略图，点一下才展开到原尺寸 —— 整条提问不再被一张图占满 */
   /** 点缩略图后要放大的那组图（同一条消息里的图可以左右翻） */
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const imageUrls = entry.blocks.flatMap((block) => (block.type === "image" ? [block.url] : []));
+  const textBlocks = entry.blocks.flatMap((block) =>
+    block.type === "text" && block.text.trim() ? [block.text] : [],
+  );
+
+  useEffect(() => {
+    const el = bubble.current;
+    if (!el) return;
+    const update = () => {
+      const style = getComputedStyle(el);
+      const line = parseFloat(style.lineHeight) || 21.6;
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      // 一行的高度以内就算「一句话」；阈值按实测算，不写死像素（缩放/字号变了也跟着走）
+      setPill(el.offsetHeight <= padding + line * 1.2);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const marker = sentinel.current;
@@ -178,41 +210,59 @@ function UserBubble({
       {/*
        * 钉住时**不铺底色**：气泡本身就是不透明的，够用了；
        * 加一条通栏底色反而会在一片流动的光晕里贴出一块死板的矩形。
-       * 只给气泡加一点投影，让它像是浮在滚动的正文之上。
+       * 只给气泡加投影，让它像是浮在滚动的正文之上。
+       *
+       * 投影要够大够黑：深色底上「气泡自己」和背景本来就对比强烈，
+       * 真正让人看出它浮起来的是**四周的文字被压暗了一圈** ——
+       * 所以用大半径 + 高不透明度，而不是默认 shadow-lg 那种浅淡的边。
        */}
       {/* pb-1：下面还有轮次容器的 space-y-4 和轨道自己的间距，
           这里再留 12px 会叠成一条比正文行距还宽的空白带 */}
       <div data-entry-id={entry.id} className="sticky top-0 z-10 flex flex-col items-end gap-1 pb-1 pt-1">
-        <div
-          className={cn(
-            "max-w-[min(680px,88%)] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground",
-            stuck && "shadow-lg shadow-black/25",
-          )}
-        >
-          {entry.blocks.map((block, index) =>
-            block.type === "text" ? (
+        {textBlocks.length > 0 && (
+          <div
+            ref={bubble}
+            className={cn(
+              "max-w-[min(680px,88%)] bg-primary px-3.5 py-2 text-[13.5px] text-primary-foreground",
+              // 一句话 → 胶囊；多行 → 大圆角 + 右下角收窄，指明「话是从右边出去的」
+              pill ? "rounded-full" : "rounded-2xl rounded-br-sm",
+              // 只有吸顶时才浮起来：贴底滚动的普通气泡不该带投影。
+              // 两层：一层大半径的软影（压暗四周正文），一层贴近的硬影（贴住边缘）
+              "transition-shadow duration-200",
+              stuck
+                ? "shadow-[0_18px_40px_-10px_rgba(0,0,0,0.9),0_3px_10px_-2px_rgba(0,0,0,0.65)]"
+                : "shadow-[0_18px_40px_-10px_rgba(0,0,0,0),0_3px_10px_-2px_rgba(0,0,0,0)]",
+            )}
+          >
+            {textBlocks.map((text, index) => (
               <p key={index} className="whitespace-pre-wrap">
-                {block.text}
+                {text}
               </p>
-            ) : null,
-          )}
+            ))}
+          </div>
+        )}
 
-          {/* 多张图排成一行：一张一张竖着堆会把气泡撑得很长 */}
-          {imageUrls.length > 0 && (
-            <div className={cn("flex flex-wrap gap-1.5", entry.blocks.some((b) => b.type === "text") && "mt-1.5")}>
-              {imageUrls.map((url, index) => (
-                <img
-                  key={url}
-                  src={url}
-                  alt={`上传的图片 ${index + 1}`}
-                  loading="lazy"
-                  onClick={() => setLightbox({ urls: imageUrls, index })}
-                  className="h-[72px] w-auto max-w-[96px] cursor-zoom-in rounded-xl border object-cover"
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        {/*
+         * 图片放在气泡**外面**：
+         *  1. 一张图会把气泡撑到一百多像素，造型就和纯文字的单行消息对不上了
+         *     （同一屏里一个胶囊一个方块，看起来像两套设计）；
+         *  2. 图本来就不是「话」，它是一份附件，和文字并排会让气泡变成相框。
+         * 仍然靠右对齐、点开看大图，多张横着排一行。
+         */}
+        {imageUrls.length > 0 && (
+          <div className="mt-0.5 flex max-w-[min(680px,88%)] flex-wrap justify-end gap-1.5">
+            {imageUrls.map((url, index) => (
+              <img
+                key={url}
+                src={url}
+                alt={`上传的图片 ${index + 1}`}
+                loading="lazy"
+                onClick={() => setLightbox({ urls: imageUrls, index })}
+                className="h-[72px] w-auto max-w-[96px] cursor-zoom-in rounded-xl border object-cover"
+              />
+            ))}
+          </div>
+        )}
         {/* 钉住时收起时间戳/复制：它们会浮在滚动的正文上，读起来很脏。
             用 opacity 而不是卸载 —— 卸载会改变高度，整块内容会往上跳一下。 */}
         <div className={cn("transition-opacity", stuck && "pointer-events-none opacity-0")}>

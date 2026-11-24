@@ -1,11 +1,58 @@
 import { ArrowLeft, FileDiff, RefreshCw, Undo2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { gitCommit, gitDiff, gitRevert, gitStatus, type GitFile, type GitStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+/** 和选择器那三个抽屉共用同一套时长：手机抽屉 260ms、桌面浮层 160ms。 */
+const SHEET_ANIM_MS = 260;
+const POP_ANIM_MS = 160;
+const UNMOUNT_SLACK_MS = 40;
+
+/**
+ * 进出场状态机（抄自 ui/responsive-picker）。
+ *
+ * 只要两个状态：mounted（还在不在 DOM 里）、closing（是不是在播退出）。
+ * 动画本身交给 CSS @keyframes —— 元素一插入 DOM 就自动开播；
+ * 关闭时先打 closing 标记播 out，播完再卸载。
+ */
+function usePanelAnimation(open: boolean, isDesktop: boolean) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [mounted, setMounted] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const mountedRef = useRef(false);
+  const animMs = isDesktop ? POP_ANIM_MS : SHEET_ANIM_MS;
+
+  useEffect(() => {
+    // 系统要求减少动画：立刻同步，不播动画、不延迟卸载
+    if (reduceMotion) {
+      mountedRef.current = open;
+      setMounted(open);
+      setClosing(false);
+      return;
+    }
+    if (open) {
+      mountedRef.current = true;
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mountedRef.current) return;
+    setClosing(true);
+    const timer = window.setTimeout(() => {
+      mountedRef.current = false;
+      setMounted(false);
+      setClosing(false);
+    }, animMs + UNMOUNT_SLACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, reduceMotion, animMs]);
+
+  return { visible: reduceMotion ? open : mounted, closing, animMs };
+}
 
 /**
  * 变更审阅：agent 改了什么，在这里看。
@@ -35,6 +82,9 @@ export function ChangesPanel({
   const [confirming, setConfirming] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const { visible, closing, animMs } = usePanelAnimation(open, isDesktop);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,14 +153,24 @@ export function ChangesPanel({
     }
   }
 
-  if (!open) return null;
+  if (!visible) return null;
   const files = status?.files ?? [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="absolute inset-0 bg-black/45" onClick={onClose} aria-hidden />
+    <div
+      data-picker-closing={closing ? "true" : undefined}
+      style={{ "--picker-dur": `${animMs}ms` } as CSSProperties}
+      className={cn("fixed inset-0 z-50 flex items-end justify-center sm:items-center", closing && "pointer-events-none")}
+    >
+      <div className="picker-mask absolute inset-0 bg-black/45" onClick={onClose} aria-hidden />
 
-      <div className="relative z-10 flex h-[85dvh] w-full flex-col overflow-hidden rounded-t-2xl border bg-background shadow-2xl sm:h-[80dvh] sm:max-w-[900px] sm:rounded-2xl">
+      {/* 手机上高度和「更换模型」那个抽屉一致（40dvh），桌面仍是居中的大卡片 */}
+      <div
+        className={cn(
+          "relative z-10 flex h-[40dvh] w-full flex-col overflow-hidden rounded-t-2xl border bg-background shadow-2xl sm:h-[80dvh] sm:max-w-[900px] sm:rounded-2xl",
+          isDesktop ? "picker-pop" : "picker-sheet",
+        )}
+      >
         <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
           {active ? (
             <Button size="icon" variant="ghost" className="size-8" onClick={() => setActive(null)} aria-label="返回列表">

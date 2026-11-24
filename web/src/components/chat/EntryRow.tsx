@@ -1,4 +1,4 @@
-import { Check, Copy, Quote } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Quote, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -15,6 +15,8 @@ interface EntryRowProps {
   onQuote?: (text: string) => void;
   /** 这一轮任务的总时长（毫秒）；只在最终回答上给，显示在时间戳后面 */
   turnDurationMs?: number;
+  /** 这一轮的开始时间已经由分隔线交代过，提问底部就不再重复一遍 */
+  hideStamp?: boolean;
 }
 
 /** 整条 entry 的纯文本（用于「复制」，不截断）。 */
@@ -91,16 +93,19 @@ function EntryActions({
   onQuote,
   align,
   durationMs,
+  hideStamp,
 }: {
   entry: Entry;
   onQuote?: (text: string) => void;
   align: "start" | "end";
   durationMs?: number;
+  /** 上面刚画过时间分隔线时不再重复显示时间戳（按钮照留） */
+  hideStamp?: boolean;
 }) {
   const text = blocksToText(entry.blocks);
   return (
     <div className={cn("flex items-center gap-1", align === "end" ? "justify-end" : "justify-start")}>
-      {entry.at !== undefined && (
+      {!hideStamp && entry.at !== undefined && (
         <span className="font-mono text-[10px] text-muted-foreground/50">
           {formatStamp(entry.at)}
           {durationMs !== undefined && (
@@ -123,11 +128,21 @@ function EntryActions({
  * 「钉住了没有」必须用哨兵 + IntersectionObserver 判断（纯 CSS 做不到）。
  * 因为只有钉住时才该铺那层渐变底 —— 否则每个提问上方都会多一条常驻色带。
  */
-function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string) => void }) {
+function UserBubble({
+  entry,
+  onQuote,
+  hideStamp,
+}: {
+  entry: Entry;
+  onQuote?: (text: string) => void;
+  hideStamp?: boolean;
+}) {
   const sentinel = useRef<HTMLDivElement | null>(null);
   const [stuck, setStuck] = useState(false);
   /** 图片平时只显示小缩略图，点一下才展开到原尺寸 —— 整条提问不再被一张图占满 */
-  const [expanded, setExpanded] = useState(false);
+  /** 点缩略图后要放大的那组图（同一条消息里的图可以左右翻） */
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
+  const imageUrls = entry.blocks.flatMap((block) => (block.type === "image" ? [block.url] : []));
 
   useEffect(() => {
     const marker = sentinel.current;
@@ -174,48 +189,170 @@ function UserBubble({ entry, onQuote }: { entry: Entry; onQuote?: (text: string)
             stuck && "shadow-lg shadow-black/25",
           )}
         >
-          {entry.blocks.map((block, index) => {
-            if (block.type === "text") {
-              return (
-                <p key={index} className="whitespace-pre-wrap">
-                  {block.text}
-                </p>
-              );
-            }
-            if (block.type === "image") {
-              return (
+          {entry.blocks.map((block, index) =>
+            block.type === "text" ? (
+              <p key={index} className="whitespace-pre-wrap">
+                {block.text}
+              </p>
+            ) : null,
+          )}
+
+          {/* 多张图排成一行：一张一张竖着堆会把气泡撑得很长 */}
+          {imageUrls.length > 0 && (
+            <div className={cn("flex flex-wrap gap-1.5", entry.blocks.some((b) => b.type === "text") && "mt-1.5")}>
+              {imageUrls.map((url, index) => (
                 <img
-                  key={index}
-                  src={block.url}
-                  alt="上传的图片"
+                  key={url}
+                  src={url}
+                  alt={`上传的图片 ${index + 1}`}
                   loading="lazy"
-                  onClick={() => setExpanded((value) => !value)}
-                  className={cn(
-                    "mb-1.5 w-auto cursor-pointer rounded-xl border object-contain",
-                    expanded ? "max-h-72 max-w-full" : "max-h-[72px] max-w-[96px]",
-                  )}
+                  onClick={() => setLightbox({ urls: imageUrls, index })}
+                  className="h-[72px] w-auto max-w-[96px] cursor-zoom-in rounded-xl border object-cover"
                 />
-              );
-            }
-            return null;
-          })}
+              ))}
+            </div>
+          )}
         </div>
         {/* 钉住时收起时间戳/复制：它们会浮在滚动的正文上，读起来很脏。
             用 opacity 而不是卸载 —— 卸载会改变高度，整块内容会往上跳一下。 */}
         <div className={cn("transition-opacity", stuck && "pointer-events-none opacity-0")}>
-          <EntryActions entry={entry} onQuote={onQuote} align="end" />
+          <EntryActions entry={entry} onQuote={onQuote} align="end" hideStamp={hideStamp} />
         </div>
       </div>
+
+      {lightbox && (
+        <ImageLightbox
+          urls={lightbox.urls}
+          start={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </>
   );
 }
 
+/**
+ * 点开大图：全屏遮罩 + 居中原图。
+ *
+ * 一条消息里有多张图时支持左右翻：键盘 ← →、两侧按钮、手机上左右滑。
+ * 点遮罩关闭，但**点图片本身不关闭** —— 翻图时手指落在图上太常见了。
+ */
+function ImageLightbox({
+  urls,
+  start,
+  onClose,
+}: {
+  urls: string[];
+  start: number;
+  onClose: () => void;
+}) {
+  const [index, setIndex] = useState(start);
+  const touchStart = useRef<number | null>(null);
+  const swiped = useRef(false);
+  const multiple = urls.length > 1;
+
+  const step = (delta: number) =>
+    setIndex((current) => (current + delta + urls.length) % urls.length);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") return onClose();
+      if (!multiple) return;
+      if (event.key === "ArrowLeft") step(-1);
+      if (event.key === "ArrowRight") step(1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // step 是纯 setState，用不到依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiple, onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="查看大图"
+      onClick={() => {
+        // 滑动手势结束时浏览器还会补一个 click，别把它当成「点遮罩关闭」
+        if (swiped.current) {
+          swiped.current = false;
+          return;
+        }
+        onClose();
+      }}
+      onTouchStart={(event) => {
+        touchStart.current = event.touches[0]?.clientX ?? null;
+      }}
+      onTouchEnd={(event) => {
+        const from = touchStart.current;
+        touchStart.current = null;
+        if (from === null || !multiple) return;
+        const dx = (event.changedTouches[0]?.clientX ?? from) - from;
+        if (Math.abs(dx) > 40) {
+          swiped.current = true;
+          step(dx > 0 ? -1 : 1);
+        }
+      }}
+      className="animate-in fade-in fixed inset-0 z-[80] flex items-center justify-center bg-black/85 p-4 duration-150"
+    >
+      <img
+        src={urls[index]}
+        alt={`查看大图 ${index + 1}`}
+        onClick={(event) => event.stopPropagation()}
+        className="max-h-full max-w-full rounded-lg object-contain"
+      />
+
+      {multiple && (
+        <>
+          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-2.5 py-0.5 font-mono text-[11px] text-white/85">
+            {index + 1} / {urls.length}
+          </span>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              step(-1);
+            }}
+            aria-label="上一张"
+            className="absolute left-2 top-1/2 grid size-10 -translate-y-1/2 cursor-pointer place-items-center rounded-full bg-black/50 text-white"
+          >
+            <ChevronLeft className="size-5" />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              step(1);
+            }}
+            aria-label="下一张"
+            className="absolute right-2 top-1/2 grid size-10 -translate-y-1/2 cursor-pointer place-items-center rounded-full bg-black/50 text-white"
+          >
+            <ChevronRight className="size-5" />
+          </button>
+        </>
+      )}
+
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+        aria-label="关闭大图"
+        className="absolute right-3 top-3 grid size-9 cursor-pointer place-items-center rounded-full bg-black/50 text-white"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  );
+}
+
 /** 一条 entry → 一组 block。角色决定气泡样式。 */
-export function EntryRow({ entry, onQuote, turnDurationMs }: EntryRowProps) {
+export function EntryRow({ entry, onQuote, turnDurationMs, hideStamp }: EntryRowProps) {
   const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "assistant" : "meta";
 
   if (role === "user") {
-    return <UserBubble entry={entry} onQuote={onQuote} />;
+    return <UserBubble entry={entry} onQuote={onQuote} hideStamp={hideStamp} />;
   }
 
   if (role === "meta") {

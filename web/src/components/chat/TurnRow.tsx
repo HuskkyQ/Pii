@@ -96,12 +96,15 @@ export function TurnRow({
   thinkingDurationMs,
   railOpen,
   onRailOpenChange,
+  hideUserStamp,
 }: {
   turn: Turn;
   onQuote?: (text: string) => void;
   thinkingDurationMs?: number;
   railOpen?: boolean;
   onRailOpenChange?: (open: boolean) => void;
+  /** 这一轮上方画了时间分隔线时，提问底部不再重复时间 */
+  hideUserStamp?: boolean;
 }) {
   const durationMs = turnDuration(turn);
   const thinkingOverride =
@@ -112,7 +115,7 @@ export function TurnRow({
 
   return (
     <div className="space-y-4">
-      {turn.user && <EntryRow entry={turn.user} onQuote={onQuote} />}
+      {turn.user && <EntryRow entry={turn.user} onQuote={onQuote} hideStamp={hideUserStamp} />}
 
       {/* 空步骤时 rail 自己返回 null（思考被拆干净、只剩正文的情况） */}
       <ProcessRail

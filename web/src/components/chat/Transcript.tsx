@@ -300,7 +300,9 @@ export function Transcript({
                     // 最终正文的流式展示交给 LiveRow。以前这里把过程整个藏起来，
                     // 结果最想知道进度的时刻反而什么都看不到。
                     <>
-                      {turn.user ? <EntryRow entry={turn.user} onQuote={onQuote} /> : null}
+                      {turn.user ? (
+                        <EntryRow entry={turn.user} onQuote={onQuote} hideStamp={showDivider} />
+                      ) : null}
                       {live && (
                         <LiveProcess
                           live={live}
@@ -315,6 +317,7 @@ export function Transcript({
                     <TurnRow
                       turn={turn}
                       onQuote={onQuote}
+                      hideUserStamp={showDivider}
                       thinkingDurationMs={
                         turn.final
                           ? (turnThinking.get(turn.final.id) ?? turn.final.thinkingMs)

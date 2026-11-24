@@ -174,7 +174,8 @@ export function StatusBar({
           aria-label={onRename ? `重命名会话：${title}` : undefined}
           className={cn(
             "group/title flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors",
-            onRename ? "hover:bg-accent/60" : "cursor-default",
+            // 能改名才给小手：不能点的时候给指针会骗人
+            onRename ? "cursor-pointer hover:bg-accent/60" : "cursor-default",
           )}
         >
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</span>
